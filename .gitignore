@@ -1,0 +1,6 @@
+node_modules/
+.copilot-pin
+.env
+trend.jsonl
+config.local.json
+CLAUDE.md

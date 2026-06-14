@@ -1,0 +1,23 @@
+{
+  "name": "xrpl-validator-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Advisory, read-only ops copilot for the XRPL validator. Deterministic health verdict + LLM explainer.",
+  "bin": {
+    "validator-health": "./healthcheck.mjs",
+    "validator-copilot": "./cli.mjs"
+  },
+  "scripts": {
+    "health": "node healthcheck.mjs",
+    "health:json": "node healthcheck.mjs --json",
+    "ask": "node cli.mjs",
+    "dry": "node cli.mjs --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
