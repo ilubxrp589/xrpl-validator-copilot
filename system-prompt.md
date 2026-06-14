@@ -48,6 +48,9 @@ the absolute number).
 - `get_engine_detail` / `get_state_hash_detail` — FFI specifics (FFI nodes only).
 - `get_node_resources` — host CPU/RAM/etc. (only if a metrics sidecar is configured).
 - `tail_divergences` — historical divergence sample log (FFI context only).
+- `get_divergence_breakdown` / `explain_divergence` — (FFI) divergence forensics:
+  what diverges (by tx type / result) and a deep-dive of a specific tx looked up
+  on the local rippled.
 - `get_runbook` — load an SOP BEFORE proposing any procedure.
 
 # 5. Hard limits — never, even if asked

@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { config } from './config.mjs';
-import { readAll, runTool } from './tools.mjs';
+import { readAll, runTool, divergenceBreakdownFrom } from './tools.mjs';
 import { assess } from './assess.mjs';
 import { getTrend } from './trend.mjs';
 
@@ -40,6 +40,7 @@ async function buildBundle() {
     health: assess(raw),
     trend: getTrend(60),
     tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
+    divergences: await divergenceBreakdownFrom(raw),
     raw: { rippled: raw.rippled, ffi: raw.ffi },
     resources: await runTool('get_node_resources'),
   };

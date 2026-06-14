@@ -106,6 +106,85 @@ async function tailDivergences(n = 10) {
   }
 }
 
+// --- Divergence forensics (Phase 3, FFI nodes only) ------------------------
+async function rippledTx(hash) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), config.fetchTimeoutMs);
+  try {
+    const res = await fetch(config.rippledRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'tx', params: [{ transaction: hash, binary: false }] }), signal: ctrl.signal });
+    const r = (await res.json())?.result;
+    if (!r || r.error) return { found: false, error: r?.error || 'no result', note: r?.error === 'txnNotFound' ? 'not found — likely older than this node retains' : undefined };
+    return { found: true, tx_type: r.TransactionType, account: r.Account, ledger_index: r.ledger_index, network_result: r.meta?.TransactionResult, validated: r.validated };
+  } catch (e) { return { found: false, error: String(e?.message || e) }; }
+  finally { clearTimeout(t); }
+}
+
+let _logSummary = null;
+async function divergenceLogSummary() {
+  if (_logSummary) return _logSummary;
+  try {
+    const lines = (await readFile(config.divergencesLog, 'utf8')).trimEnd().split('\n').filter(Boolean);
+    const byType = {}, byTer = {}; let lo = Infinity, hi = -Infinity; const samples = [];
+    for (const l of lines) {
+      try {
+        const o = JSON.parse(l);
+        byType[o.tx_type] = (byType[o.tx_type] || 0) + 1;
+        byTer[o.our_ter] = (byTer[o.our_ter] || 0) + 1;
+        if (o.ledger_seq) { lo = Math.min(lo, o.ledger_seq); hi = Math.max(hi, o.ledger_seq); }
+        if (samples.length < 5) samples.push({ tx_hash: o.tx_hash, tx_type: o.tx_type, our_ter: o.our_ter, ledger_seq: o.ledger_seq });
+      } catch { /* skip */ }
+    }
+    _logSummary = { total: lines.length, by_tx_type: byType, by_our_ter: byTer, ledger_range: lo === Infinity ? null : [lo, hi], samples, note: 'historical sample log — these txs are likely older than the local rippled retains, so per-tx network lookup may return not-found' };
+    return _logSummary;
+  } catch (e) { return { error: String(e?.message || e), note: 'no divergence log configured' }; }
+}
+
+async function findInLog(hash) {
+  try {
+    for (const l of (await readFile(config.divergencesLog, 'utf8')).split('\n')) {
+      if (l.includes(hash)) { try { return JSON.parse(l); } catch { /* */ } }
+    }
+  } catch { /* */ }
+  return null;
+}
+
+const hashOf = (s) => (typeof s === 'string' ? (s.match(/[0-9A-Fa-f]{64}/)?.[0] || s) : null);
+
+/** Live divergence counts/maps (from FFI) + historical log summary. */
+export async function divergenceBreakdownFrom(raw) {
+  const v = raw?.ffi?.engine?.ffi_verifier;
+  if (!v) return { ffiAvailable: false, note: 'divergence forensics require the custom FFI validator API (absent on a stock node)' };
+  return {
+    ffiAvailable: true,
+    live: {
+      apply_diverged: v.live_apply_diverged ?? 0,
+      silent_diverged: v.live_apply_silent_diverged ?? 0,
+      mutation_diverged: v.live_apply_mutation_diverged ?? 0,
+      shadow_hash_mismatched: v.shadow_hash_mismatched ?? 0,
+      by_type: v.live_diverged_by_type || {},
+      mutation_by_type: v.mutation_diverged_by_type || {},
+      silent_by_pair: v.silent_diverged_by_pair || {},
+      samples: [...(v.diverged_tx_samples || []), ...(v.mutation_diverged_samples || []), ...(v.silent_diverged_samples || [])].slice(0, 10),
+    },
+    historical: await divergenceLogSummary(),
+  };
+}
+
+async function explainDivergence(txHash) {
+  const raw = await readAll();
+  const v = raw?.ffi?.engine?.ffi_verifier;
+  if (!v) return { error: 'FFI not available — divergence forensics need the custom validator API' };
+  let hash = txHash, meta = null;
+  if (!hash) {
+    const live = [...(v.diverged_tx_samples || []), ...(v.mutation_diverged_samples || []), ...(v.silent_diverged_samples || [])];
+    if (live.length) hash = hashOf(live[0]);
+    else { const s = await divergenceLogSummary(); meta = s.samples?.[0] || null; hash = meta?.tx_hash; }
+  }
+  if (!hash) return { note: 'no divergences to explain (live counters 0 and no log samples)' };
+  if (!meta) meta = await findInLog(hash);
+  return { tx_hash: hash, divergence_meta: meta, network_lookup: await rippledTx(hash), hint: 'Explain WHY the engine diverged: compare our_ter to the network result, and what the tx type/class implies.' };
+}
+
 // --- Runbooks: load an SOP before recommending a procedure ------------------
 const RUNBOOKS = {
   'health-check': 'health-check.md',
@@ -165,6 +244,16 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: { n: { type: 'integer', description: 'how many entries (default 10, max 100)' } }, additionalProperties: false },
   },
   {
+    name: 'get_divergence_breakdown',
+    description: '(FFI nodes only) The divergence picture: live apply/silent/mutation/shadow-hash counts + by-type / by-pair maps + sample hashes, AND a summary of the historical divergence log (counts by tx_type and by our_ter, ledger range). Use for "what diverges / what diverged / which tx types".',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'explain_divergence',
+    description: '(FFI nodes only) Deep-dive one diverged transaction: picks a sample (or the given txHash), pulls its recorded divergence metadata (our_ter, tx_type, ledger), and looks the tx up on the local rippled. Explain why the engine diverged from the network result. Old txs may be beyond node retention (network_lookup.found=false).',
+    input_schema: { type: 'object', properties: { txHash: { type: 'string', description: 'optional specific tx hash; omit to auto-pick a sample' } }, additionalProperties: false },
+  },
+  {
     name: 'get_runbook',
     description: "Load an operator SOP BEFORE recommending any procedure. Names: 'health-check', 'drift-recovery', 'upgrade', 'spin-up'. Base recovery steps on the runbook text; never improvise destructive steps.",
     input_schema: { type: 'object', properties: { name: { type: 'string', enum: Object.keys(RUNBOOKS) } }, required: ['name'], additionalProperties: false },
@@ -181,6 +270,8 @@ export async function runTool(name, input = {}) {
     case 'get_rippled_status': return rippledInfo();
     case 'get_node_resources': return nodeResources();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);
+    case 'get_divergence_breakdown': return divergenceBreakdownFrom(await readAll());
+    case 'explain_divergence': return explainDivergence(input.txHash);
     case 'get_runbook': return getRunbook(input.name);
     default: return { error: `unknown tool '${name}'` };
   }
