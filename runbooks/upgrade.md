@@ -1,23 +1,23 @@
 # Runbook: rippled / xrpld upgrades
 
-ADVISORY. Human runs every step. Build and prove on **m3060 first** — never
-touch .39 until the new build hash-matches.
+ADVISORY. A human runs every step. Prove the upgrade on a NON-production node
+first; never upgrade your live validator until you've verified the new build.
 
-## Point releases (e.g. 3.1.2 → 3.1.3) — proven ~15 min
-- Install the new rippled .deb.
-- Rebuild the FFI shim against the new libxrpl; cmake target is `xrpl.libxrpl`.
-- Watch the stale-libxrpl trap: make sure the shim links the NEW libxrpl, not a
-  cached copy, or you get silent version-mismatch behavior.
-- Bring up, confirm hash-match before declaring done.
+## Why it matters
+- New releases activate **amendments**. If the network activates an amendment your
+  node doesn't support, the node goes **amendment-blocked** — out of consensus until
+  upgraded. Staying current is not optional.
+- New amendments and transaction types can change behavior. If you run custom tooling
+  on top of the node, re-verify across a range of ledgers, not just a handful.
 
-## 3.2.0 / rippled→xrpld — MAJOR, not just a rename
-- Non-upgraded nodes fall OUT of consensus — this is not optional once activated.
-- Higher divergence risk: new amendments and tx-types mean the FFI engine can
-  diverge on transactions it has never seen. Re-verify shadow-hash match across a
-  range of ledgers, not just a handful.
-- Expect FFI shim + libxrpl rebuild, and script renames (rippled → xrpld).
-- Sequence: build m3060 → hash-match a sustained window → only then plan .39.
+## Sequence
+1. Install or build the new version on a test/spare node.
+2. Rebuild any custom tooling (e.g. an FFI shim) against the new library.
+3. Bring it up; confirm it stays in consensus and — if you verify hashes — matches
+   the network over a sustained window.
+4. Only then upgrade the production validator, one node at a time.
 
-## Always
-- Build host is m3060 (.39 lacks libxrpl.a + has a Boost incompatibility).
-- One change at a time; verify compilation; keep .39 rippled alive throughout.
+## Watch for
+- Stale linkage: make sure custom tooling links the NEW library, not a cached copy.
+- Config/script renames between major versions.
+- One change at a time; keep your source/upstream node alive throughout.

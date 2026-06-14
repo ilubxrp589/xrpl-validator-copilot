@@ -15,13 +15,13 @@ Captured 2026-06-14. Not built — pick what's worth it.
 - **Per-tx divergence deep-dive.** Paste a tx hash → COP explains the TER / mutation
   mismatch from the FFI samples (+ optional local rippled tx lookup).
 - **Incident pattern recall.** Index `divergences.jsonl` + past halt events so COP can
-  say "this matches the 2026-05-30 OOM-halt signature."
+  say "this matches a known past incident signature."
 - **Upstream root cause (read-only).** Investigate why the validator's Rust emits a
   frozen top-level `engine.ledger_seq` and `tracked_validators: 0` / `agreement: null`.
 
 ## Bigger / later
-- **Cross-node view.** Fold the .39 source rippled health in as a first-class signal
-  (its OOM is the #1 documented halt cause).
+- **Cross-node view.** Fold the source/upstream rippled health in as a first-class
+  signal (an unhealthy source is a common halt cause).
 - **Daily digest.** `/schedule` a morning health summary.
 - **Approval-gated actions.** COP proposes a step, human taps approve, it runs. NOTE:
   conflicts with the no-auto-recovery design — listed for completeness, not recommended.

@@ -1,34 +1,29 @@
 # Runbook: Health check
 
-ADVISORY. The copilot presents this; a human interprets and acts. The verdict
-in `get_health_summary` is computed deterministically — trust it over vibes.
+ADVISORY. The copilot presents this; a human interprets and acts. Trust the
+deterministic verdict from `get_health_summary` over impressions.
 
 ## The rule
-"Validations are happening" is NOT health. The signing gate can stay green while
-state.rocks quietly rots underneath. A node is healthy only when ALL of these
-are green at once:
+"Producing validations" is NOT the same as healthy. A node can look busy while it's
+amendment-blocked, lagging, or (on FFI nodes) silently diverging. A validator is
+healthy only when all of these hold at once:
 
-1. **state-hash integrity** — `consecutive_matches` climbing, `total_mismatches`
-   flat at 0, `ready_to_sign` true. A mismatch that breaks the streak while NOT
-   syncing is the halt-class signature → treat as serious.
-2. **ledger lag vs network edge** — our `ledger_seq` within a few of the local
-   rippled's `validated_ledger.seq`. Growing lag = falling behind.
-3. **divergences** — FFI `live_apply_diverged` / `silent_diverged` /
-   `mutation_diverged` / `shadow_hash_mismatched`. Post-fix these are 0. Counters
-   are cumulative since start, so what matters is whether they are *still growing*
-   (a delta), not merely nonzero.
-4. **state.rocks miss rate** — efficiency metric, ~7-8% is normal here; watch the
-   *trend*, not the absolute. Not an acute failure on its own.
-5. **source rippled (.39)** — `server_state=full`, contiguous `complete_ledgers`,
-   peers > 0. This node is the sync source; its health gates everything.
+1. **server_state** — `full` / `proposing` / `validating` (not `connected` /
+   `tracking` / `syncing` / `disconnected`).
+2. **not amendment-blocked** — an amendment-blocked node is OUT of consensus until
+   upgraded. The single most important generic signal.
+3. **ledger currency** — the last validated ledger is seconds old, not minutes; the
+   node is keeping up with the network.
+4. **history** — `complete_ledgers` is contiguous (no gaps).
+5. **peers / load** — enough peers, server not overloaded (`load_factor` ≈ 1).
+6. **(FFI nodes only)** — state-hash match streak climbing, no growing divergence.
 
 ## How to read it
-- `get_health_summary` → the rolled-up verdict + every signal.
-- Drill in with `get_engine_detail`, `get_state_hash_detail`, `get_rippled_status`.
-- Spin-up grace: for ~42-45 ledgers after a `bulk_sync` verifies, early MISMATCH
-  noise is EXPECTED — do not raise the alarm or trigger recovery in that window
-  (see the spin-up runbook).
+- `get_health_summary` → the rolled-up verdict, the tier, and every signal.
+- `get_trend` → whether anything is *moving* (lag creeping, divergence growing).
+- Drill in: `get_rippled_status` (any node), or `get_engine_detail` /
+  `get_state_hash_detail` (FFI nodes only).
 
-## Do not
-- Do not declare "stable" off a single signal (especially signing activity).
-- Do not act on one noisy reading — re-check, look for a trend.
+## Don't
+- Don't declare "healthy" off one signal (especially raw validation activity).
+- Don't react to a single noisy reading — re-check and look for a trend.

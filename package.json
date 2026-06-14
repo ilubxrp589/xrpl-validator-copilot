@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Advisory, read-only ops copilot for the XRPL validator. Deterministic health verdict + LLM explainer.",
+  "description": "Advisory, read-only ops copilot for any rippled/xrpld XRP Ledger validator. Deterministic health verdict + LLM explainer.",
+  "license": "MIT",
+  "author": "ilubxrp589",
+  "repository": { "type": "git", "url": "https://github.com/ilubxrp589/xrpl-validator-copilot.git" },
+  "keywords": ["xrpl", "rippled", "xrpld", "validator", "monitoring", "health", "ops", "copilot", "claude"],
   "bin": {
     "validator-health": "./healthcheck.mjs",
     "validator-copilot": "./cli.mjs"
