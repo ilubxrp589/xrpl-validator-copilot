@@ -12,18 +12,26 @@ import { config } from './config.mjs';
 const A = config.alerts;
 const state = new Map(); // key -> { count, alerted, lastAlertAt, level }
 
+// The detail of each gating signal that's off — the human reason for WATCH/DEGRADED.
+function signalDetails(a) {
+  return (a.triggers || []).map((t) => {
+    const k = t.split(':')[0];
+    const s = a.signals?.[k];
+    return s?.detail ? `• ${s.detail}` : `• ${t}`;
+  }).join('\n');
+}
+
 /** The set of alert conditions implied by the current assessment + trend. */
 export function conditions(a, trend) {
   const out = [];
   const v = a.verdict;
-  const trig = (a.triggers || []).join(', ');
 
   // Reactive — from the deterministic verdict
   if (v === 'AMENDMENT_BLOCKED') out.push({ key: 'amendment_blocked', level: 'critical', title: '🔴 AMENDMENT-BLOCKED', detail: a.one_liner });
   else if (v === 'HALT_SUSPECTED') out.push({ key: 'halt_suspected', level: 'critical', title: '🔴 HALT SUSPECTED', detail: a.one_liner });
   else if (v === 'UNREACHABLE') out.push({ key: 'unreachable', level: 'critical', title: '🔴 NODE UNREACHABLE', detail: a.one_liner });
-  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: trig ? `${a.one_liner}\n(${trig})` : a.one_liner });
-  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: trig ? `${a.one_liner}\n(${trig})` : a.one_liner });
+  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: signalDetails(a) || a.one_liner });
+  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: signalDetails(a) || a.one_liner });
 
   // Predictive — trend-based; can fire even when the snapshot verdict still looks OK.
   // (Tier-aware: these fields are null on a stock node, so they simply don't fire.)
