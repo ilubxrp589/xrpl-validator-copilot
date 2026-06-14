@@ -42,6 +42,19 @@ export const config = {
   provider: process.env.COPILOT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'api' : 'cli'),
   claudeBin: process.env.COPILOT_CLAUDE_BIN || 'claude',
 
+  // Phase 2 — watchdog alerts. channel '' disables it. SECRETS (telegram token,
+  // webhook URL) belong in gitignored config.local.json or env — never committed.
+  alerts: {
+    channel: process.env.COPILOT_ALERT_CHANNEL || LOCAL.alerts?.channel || '',   // 'telegram' | 'webhook'
+    telegram: {
+      token: process.env.COPILOT_TG_TOKEN || LOCAL.alerts?.telegram?.token || '',
+      chatId: process.env.COPILOT_TG_CHAT || LOCAL.alerts?.telegram?.chatId || '',
+    },
+    webhookUrl: process.env.COPILOT_ALERT_WEBHOOK || LOCAL.alerts?.webhookUrl || '',
+    webhookFormat: process.env.COPILOT_ALERT_FORMAT || LOCAL.alerts?.webhookFormat || 'json', // json|slack|discord|ntfy
+    cooldownMin: Number(process.env.COPILOT_ALERT_COOLDOWN_MIN || 15),
+  },
+
   // Network timeout for a single endpoint read (ms).
   fetchTimeoutMs: Number(process.env.COPILOT_FETCH_TIMEOUT_MS || 6000),
 

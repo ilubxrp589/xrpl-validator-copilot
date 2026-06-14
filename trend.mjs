@@ -61,15 +61,16 @@ export async function sample() {
   while (ring.length > MAX) ring.shift();
   try { appendFileSync(FILE, JSON.stringify(rec) + '\n'); } catch { /* ignore */ }
   if (++appendsSinceCompact >= 200) compact();
-  return rec;
+  return a;
 }
 
 let timer = null;
-export function startSampler(intervalMs = INTERVAL_MS) {
+export function startSampler(intervalMs = INTERVAL_MS, onSample) {
   ensureLoaded();
-  sample().catch(() => {});                 // immediate first sample
+  const run = () => sample().then((a) => onSample?.(a)).catch(() => {});
+  run();                                    // immediate first sample
   if (timer) clearInterval(timer);
-  timer = setInterval(() => { sample().catch(() => {}); }, intervalMs);
+  timer = setInterval(run, intervalMs);
   timer.unref?.();
   return timer;
 }

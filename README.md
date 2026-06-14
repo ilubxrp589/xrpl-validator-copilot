@@ -52,6 +52,14 @@ and `/trend` stay open. A per-IP rate limit caps spend even if the PIN is shared
 `HEALTHY · WATCH · SYNCING · DEGRADED · AMENDMENT_BLOCKED · HALT_SUSPECTED · UNREACHABLE`,
 computed deterministically in `assess.mjs`. The LLM reports it; it doesn't invent it.
 
+## Alerts (watchdog)
+Run as a service and the watchdog pushes an alert when the verdict degrades or a
+trend goes wrong — reactively (verdict flips) and predictively (divergence growing,
+match-streak stalled) — plus a recovery note when it clears. Debounced, cooldown'd,
+and read-only. Configure a channel (Telegram, or a generic webhook for Slack /
+Discord / ntfy / custom) via env or `config.local.json` (see `.env.example`). Test
+delivery with `GET /alert-test` (PIN-gated).
+
 ## Safety
 Every tool only reads. There is no code path from the copilot to a node mutation.
 Recovery guidance always comes from a loaded runbook, framed as steps for a human.
