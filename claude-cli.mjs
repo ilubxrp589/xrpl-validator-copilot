@@ -39,7 +39,8 @@ async function buildBundle() {
   return {
     health: assess(raw),
     trend: getTrend(60),
-    raw: { engine: raw.engine, stateHash: raw.stateHash, consensus: raw.consensus, peers: raw.peers, rippled: raw.rippled },
+    tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
+    raw: { rippled: raw.rippled, ffi: raw.ffi },
     resources: await runTool('get_node_resources'),
   };
 }

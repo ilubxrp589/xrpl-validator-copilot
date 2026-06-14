@@ -12,18 +12,18 @@ function localCfg() {
 const LOCAL = localCfg();
 
 export const config = {
-  // Validator API (/api/engine, /api/consensus, /api/state-hash, /api/peers).
-  // Point this DIRECTLY at the validator's API host so the copilot doesn't depend
-  // on a dashboard proxy being up — a health monitor must work when other things
-  // are flaky. Set via COPILOT_API_BASE or config.local.json.
-  apiBase: process.env.COPILOT_API_BASE || LOCAL.apiBase || 'http://localhost:3777',
+  // PRIMARY source — standard rippled/xrpld JSON-RPC (server_info). Every XRPL
+  // validator exposes this, so point COP at YOUR node's RPC; it drives the
+  // generic health verdict that works on any node.
+  rippledRpc: process.env.COPILOT_RIPPLED_RPC || LOCAL.rippledRpc || 'http://localhost:5005',
 
-  // System-resources sidecar (cpu/ram/disk/net) on the validator host.
-  metricsBase: process.env.COPILOT_METRICS_BASE || LOCAL.metricsBase || 'http://localhost:3779',
+  // OPTIONAL — a custom validator API exposing an FFI shadow-verifier
+  // (/api/engine, /api/state-hash, ...). Most nodes don't have this; leave empty.
+  // If set and its /api/engine responds, COP layers deeper correctness signals on top.
+  apiBase: process.env.COPILOT_API_BASE || LOCAL.apiBase || '',
 
-  // Local rippled JSON-RPC — the source node whose health gates our sync.
-  // (The 2026-05 halt saga root cause: this node OOM'd → incomplete pulls.)
-  rippledRpc: process.env.COPILOT_RIPPLED_RPC || 'http://localhost:5005',
+  // OPTIONAL — a system-resources sidecar (cpu/ram/disk/net). Empty if none.
+  metricsBase: process.env.COPILOT_METRICS_BASE || LOCAL.metricsBase || '',
 
   // Historical divergence sample log (NOT the live signal — that's the FFI
   // counters in /api/engine). Used only for sample context.

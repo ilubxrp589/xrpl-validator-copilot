@@ -32,11 +32,20 @@ async function rippledInfo() {
     });
     const j = await res.json();
     const info = j?.result?.info || {};
+    const vl = info.validated_ledger || {};
     return {
       server_state: info.server_state,
+      amendment_blocked: info.amendment_blocked ?? false,
       complete_ledgers: info.complete_ledgers,
-      validated_seq: info.validated_ledger?.seq,
+      validated_seq: vl.seq ?? null,
+      validated_age: vl.age ?? null,
+      validated_hash: vl.hash ?? null,
       peers: info.peers,
+      load_factor: info.load_factor,
+      validation_quorum: info.validation_quorum,
+      pubkey_validator: info.pubkey_validator,
+      last_close: info.last_close,
+      build_version: info.build_version,
       uptime: info.uptime,
     };
   } catch (e) {
@@ -46,25 +55,38 @@ async function rippledInfo() {
   }
 }
 
-/** Fetch every live signal in parallel and return the merged raw bundle. */
+/**
+ * Read both tiers. The generic core (rippled server_info) ALWAYS runs. The FFI
+ * tier is fetched only when config.apiBase is set AND its /api/engine responds —
+ * so a stock validator gets the core, and a node with the custom FFI API gets both.
+ * @returns { rippled, ffi:{engine,consensus,stateHash,peers}|null, ffiAvailable, errors }
+ */
 export async function readAll() {
   const errors = [];
-  const grab = async (path, key) => {
-    try { return await getJson(`${config.apiBase}${path}`); }
-    catch (e) { errors.push(`${key}: ${e?.message || e}`); return null; }
-  };
-  const [engine, consensus, stateHash, peersRaw, rippled] = await Promise.all([
-    grab('/api/engine', 'engine'),
-    grab('/api/consensus', 'consensus'),
-    grab('/api/state-hash', 'state-hash'),
-    grab('/api/peers', 'peers'),
-    rippledInfo(),
-  ]);
-  const peers = peersRaw?.connected ?? peersRaw?.peers ?? null;
-  return { engine, consensus, stateHash, peers, rippled, errors };
+  const rippled = await rippledInfo();
+
+  let ffi = null, ffiAvailable = false;
+  if (config.apiBase) {
+    const grab = async (path, key) => {
+      try { return await getJson(`${config.apiBase}${path}`); }
+      catch (e) { errors.push(`${key}: ${e?.message || e}`); return null; }
+    };
+    const [engine, consensus, stateHash, peersRaw] = await Promise.all([
+      grab('/api/engine', 'engine'),
+      grab('/api/consensus', 'consensus'),
+      grab('/api/state-hash', 'state-hash'),
+      grab('/api/peers', 'peers'),
+    ]);
+    if (engine || stateHash) {
+      ffiAvailable = true;
+      ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
+    }
+  }
+  return { rippled, ffi, ffiAvailable, errors };
 }
 
 async function nodeResources() {
+  if (!config.metricsBase) return { error: 'no metrics sidecar configured' };
   try { return await getJson(`${config.metricsBase}/metrics`); }
   catch (e) { return { error: String(e?.message || e) }; }
 }
@@ -108,7 +130,7 @@ export const toolDefs = [
   {
     name: 'get_health_summary',
     description:
-      'Primary tool. Reads all live signals and returns the DETERMINISTIC health verdict (.verdict: HEALTHY|WATCH|SYNCING|DEGRADED|HALT_SUSPECTED|UNREACHABLE) plus per-signal breakdown. Always call this before making any claim about whether the validator is healthy. Report .verdict and .one_liner verbatim.',
+      'Primary tool. Reads all live signals and returns the DETERMINISTIC verdict (.verdict: HEALTHY|WATCH|SYNCING|DEGRADED|AMENDMENT_BLOCKED|HALT_SUSPECTED|UNREACHABLE), the .tier (generic, or generic+ffi if the node exposes the custom FFI API), and a per-signal breakdown. Always call this before claiming anything about health. Report .verdict and .one_liner verbatim.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -129,12 +151,12 @@ export const toolDefs = [
   },
   {
     name: 'get_rippled_status',
-    description: 'Local rippled (source node) server_info: server_state, complete_ledgers, validated seq, peers. This is the sync source whose health gates the validator (its OOM caused the 2026-05-30 halt).',
+    description: 'Standard rippled/xrpld server_info for the node COP is pointed at: server_state, amendment_blocked, complete_ledgers, validated-ledger age, peers, load_factor, validation_quorum, and whether it is a configured validator. The generic-core signal source — works on any XRPL node.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'get_node_resources',
-    description: 'Host CPU/RAM/disk/net for the validator machine (m3060) from the metrics sidecar.',
+    description: 'Host CPU/RAM/disk/net from an optional metrics sidecar (only if one is configured).',
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -154,8 +176,8 @@ export async function runTool(name, input = {}) {
   switch (name) {
     case 'get_health_summary': return assess(await readAll());
     case 'get_trend': { const { getTrend } = await import('./trend.mjs'); return getTrend(input.windowMinutes ?? 60); }
-    case 'get_engine_detail': { const r = await readAll(); return r.engine ?? { error: 'engine unreachable', read_errors: r.errors }; }
-    case 'get_state_hash_detail': { const r = await readAll(); return r.stateHash ?? { error: 'state-hash unreachable', read_errors: r.errors }; }
+    case 'get_engine_detail': { const r = await readAll(); return r.ffi?.engine ?? { error: 'FFI engine API not available on this node (generic-core mode)', read_errors: r.errors }; }
+    case 'get_state_hash_detail': { const r = await readAll(); return r.ffi?.stateHash ?? { error: 'FFI state-hash API not available on this node (generic-core mode)', read_errors: r.errors }; }
     case 'get_rippled_status': return rippledInfo();
     case 'get_node_resources': return nodeResources();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);

@@ -43,18 +43,19 @@ export async function sample() {
   let ram = null;
   try { const res = await runTool('get_node_resources'); ram = res?.validator_ram_gb ?? null; } catch { /* ignore */ }
   const s = a.signals;
-  const d = s.divergences || {};
+  const div = s.divergences;
   const rec = {
     ts: Date.now(),
     verdict: a.verdict,
-    cm: s.state_integrity?.consecutive_matches ?? null,   // cumulative
-    mm: s.state_integrity?.total_mismatches ?? null,      // cumulative
-    lag: s.ledger_lag?.lag ?? null,                       // level
-    div: (d.live_apply_diverged ?? 0) + (d.silent ?? 0) + (d.mutation ?? 0) + (d.shadow_hash_mismatched ?? 0), // cumulative
-    miss: s.state_rocks?.miss_rate ?? null,               // level
-    state: s.source_rippled?.server_state ?? null,
-    peers: s.source_rippled?.peers ?? null,
-    ram,                                                  // m3060 validator-process RAM (GB)
+    cm: s.state_integrity?.consecutive_matches ?? null,   // FFI, cumulative
+    mm: s.state_integrity?.total_mismatches ?? null,      // FFI, cumulative
+    lag: s.ffi_lag?.lag ?? null,                          // FFI, level
+    div: div ? (div.live_apply_diverged ?? 0) + (div.silent ?? 0) + (div.mutation ?? 0) + (div.shadow_hash_mismatched ?? 0) : null, // FFI, cumulative
+    miss: s.state_rocks?.miss_rate ?? null,               // FFI, level
+    state: s.server_state?.server_state ?? null,          // generic
+    age: s.ledger?.age ?? null,                           // generic — ledger currency
+    peers: s.peers?.peers ?? null,                        // generic
+    ram,
   };
   ring.push(rec);
   while (ring.length > MAX) ring.shift();
@@ -94,20 +95,25 @@ export function getTrend(windowMinutes = 60) {
   for (let i = 1; i < recs.length; i++) if (recs[i].verdict !== recs[i - 1].verdict) flips.push({ ts: recs[i].ts, from: recs[i - 1].verdict, to: recs[i].verdict });
   const lags = recs.map((r) => r.lag).filter((x) => x != null);
   const rams = recs.map((r) => r.ram).filter((x) => x != null);
+  const ffi = last.cm != null;
+  const ages = recs.map((r) => r.age).filter((x) => x != null);
   return {
     window_minutes: windowMinutes,
     span_minutes: +spanMin.toFixed(1),
     samples: recs.length,
     current_verdict: last.verdict,
     verdict_flips: flips,
-    match_streak: { from: first.cm, to: last.cm, delta: (last.cm ?? 0) - (first.cm ?? 0), per_min: perMin(first.cm, last.cm), stalled: (last.cm ?? 0) - (first.cm ?? 0) === 0 },
-    new_mismatches: (last.mm ?? 0) - (first.mm ?? 0),
-    new_divergences: (last.div ?? 0) - (first.div ?? 0),   // THE rate-of-divergence answer (not cumulative)
-    divergences_per_min: perMin(first.div, last.div),
-    miss_rate: { from: first.miss, to: last.miss, direction: last.miss > first.miss ? 'rising' : last.miss < first.miss ? 'falling' : 'flat' },
-    ledger_lag: lags.length ? { min: Math.min(...lags), max: Math.max(...lags), last: last.lag } : null,
+    // generic (every node)
+    ledger_age_secs: ages.length ? { min: Math.min(...ages), max: Math.max(...ages), last: last.age } : null,
     rippled_state: { from: first.state, to: last.state, changed: first.state !== last.state },
     peers: { from: first.peers, to: last.peers },
-    validator_ram_gb: rams.length ? { from: first.ram, to: last.ram, delta: +((last.ram ?? 0) - (first.ram ?? 0)).toFixed(2), per_min: perMin(first.ram, last.ram), note: 'm3060 validator-process RAM; a sustained climb = memory pressure worth watching' } : null,
+    // FFI tier (only when the custom API is present)
+    match_streak: ffi ? { from: first.cm, to: last.cm, delta: (last.cm ?? 0) - (first.cm ?? 0), per_min: perMin(first.cm, last.cm), stalled: (last.cm ?? 0) - (first.cm ?? 0) === 0 } : null,
+    new_mismatches: ffi ? (last.mm ?? 0) - (first.mm ?? 0) : null,
+    new_divergences: ffi ? (last.div ?? 0) - (first.div ?? 0) : null,   // rate-of-divergence (not cumulative)
+    divergences_per_min: ffi ? perMin(first.div, last.div) : null,
+    miss_rate: ffi ? { from: first.miss, to: last.miss, direction: last.miss > first.miss ? 'rising' : last.miss < first.miss ? 'falling' : 'flat' } : null,
+    ledger_lag: lags.length ? { min: Math.min(...lags), max: Math.max(...lags), last: last.lag } : null,
+    validator_ram_gb: rams.length ? { from: first.ram, to: last.ram, delta: +((last.ram ?? 0) - (first.ram ?? 0)).toFixed(2), per_min: perMin(first.ram, last.ram), note: 'validator-process RAM; a sustained climb = memory pressure worth watching' } : null,
   };
 }
