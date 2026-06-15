@@ -96,3 +96,44 @@ function callClaude(system, prompt) {
     });
   });
 }
+
+// --- Phase 4: investigate mode — claude -p with native READ-ONLY code tools ---
+const INVESTIGATE_SYSTEM = `You are the Validator Ops Copilot in INVESTIGATE mode.
+You have READ-ONLY access (Read, Grep, Glob) to the validator's source in the current
+directory. Investigate the operator's question by reading the code: locate the relevant
+files/functions, trace the logic, and explain the likely root cause in plain English
+with file:line references.
+
+Rules:
+- You are strictly READ-ONLY — no Bash/Edit/Write. Never edit, run, or change anything.
+- Read ONLY source code relevant to the question. NEVER read, summarize, or output the
+  contents of credential/secret files (.env, config.local.json, *.pin, keys, tokens).
+- If the answer isn't in the code you can see, say so plainly.`;
+
+export async function runInvestigate(question) {
+  if (!config.codeRoot) return { reply: 'Investigate mode is not configured (set codeRoot to the validator source dir).', provider: 'investigate', toolsUsed: [] };
+  let health = '';
+  try { const a = assess(await readAll()); health = `Live node verdict: ${a.verdict} — ${a.one_liner}\n\n`; } catch { /* ignore */ }
+  const prompt = `${health}INVESTIGATE: ${question}`;
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-p', prompt,
+      '--system-prompt', INVESTIGATE_SYSTEM,
+      '--model', config.model,
+      '--output-format', 'text',
+      '--add-dir', config.codeRoot,
+      '--allowed-tools', 'Read', 'Grep', 'Glob',
+    ];
+    const child = spawn(config.claudeBin, args, { cwd: config.codeRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('investigate timed out (240s)')); }, 240_000);
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`failed to spawn '${config.claudeBin}': ${e.message}`)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve({ reply: out.trim(), provider: 'investigate', toolsUsed: ['Read', 'Grep', 'Glob'] });
+      else reject(new Error(`investigate exited ${code}: ${(err || out).trim().slice(0, 400)}`));
+    });
+  });
+}

@@ -18,6 +18,7 @@ import { assess } from './assess.mjs';
 import { ask } from './copilot.mjs';
 import { startSampler, getTrend } from './trend.mjs';
 import * as watchdog from './watchdog.mjs';
+import { runInvestigate } from './claude-cli.mjs';
 import { readFileSync } from 'node:fs';
 
 const PORT = Number(process.env.COPILOT_PORT || 3780);
@@ -63,7 +64,7 @@ const server = createServer(async (req, res) => {
       return send(res, 200, await watchdog.sendTest());
     }
     if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
-      return send(res, 200, { service: 'xrpl-validator-copilot', model: config.model, provider: config.provider, apiBase: config.apiBase, pinRequired: !!currentPin(), routes: ['GET /health', 'GET /trend', 'GET /alert-test', 'POST /copilot'] });
+      return send(res, 200, { service: 'xrpl-validator-copilot', model: config.model, provider: config.provider, apiBase: config.apiBase, pinRequired: !!currentPin(), routes: ['GET /health', 'GET /trend', 'GET /alert-test', 'POST /copilot', 'POST /investigate'] });
     }
     if (req.method === 'POST' && req.url === '/copilot') {
       if (config.provider === 'api' && !config.apiKey) return send(res, 503, { error: 'provider=api but ANTHROPIC_API_KEY not set' });
@@ -82,6 +83,20 @@ const server = createServer(async (req, res) => {
       if (rateLimited(ip)) return send(res, 429, { error: 'too many prompts — slow down a moment' });
       const { reply, toolsUsed, provider } = await ask(question, history);
       return send(res, 200, { reply, toolsUsed, provider });
+    }
+    if (req.method === 'POST' && req.url === '/investigate') {
+      if (!config.codeRoot) return send(res, 503, { error: 'investigate mode not configured (set codeRoot)' });
+      let raw = '';
+      for await (const chunk of req) { raw += chunk; if (raw.length > 1_000_000) { req.destroy(); return; } }
+      let body = {};
+      try { body = JSON.parse(raw || '{}'); } catch { return send(res, 400, { error: 'invalid JSON' }); }
+      const pin = currentPin();
+      if (pin && (req.headers['x-copilot-pin'] || body.pin || '') !== pin) return send(res, 401, { error: 'PIN required or invalid' });
+      const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+      if (rateLimited(ip)) return send(res, 429, { error: 'too many requests — slow down' });
+      const question = (body.question || '').toString().trim();
+      if (!question) return send(res, 400, { error: 'missing "question"' });
+      return send(res, 200, await runInvestigate(question));
     }
     return send(res, 404, { error: 'not found' });
   } catch (e) {

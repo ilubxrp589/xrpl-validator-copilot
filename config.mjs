@@ -42,6 +42,12 @@ export const config = {
   provider: process.env.COPILOT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'api' : 'cli'),
   claudeBin: process.env.COPILOT_CLAUDE_BIN || 'claude',
 
+  // Phase 4 — investigate mode lets COP READ the validator source (Read/Grep/Glob,
+  // no Bash/Edit/Write) to chase root causes. Empty disables it. Investigate grants
+  // read access to this tree (deployment-specific → config.local.json/env), so point
+  // it at the source dir and don't fill that tree with unrelated secrets.
+  codeRoot: process.env.COPILOT_CODE_ROOT || LOCAL.codeRoot || '',
+
   // Phase 2 — watchdog alerts. channel '' disables it. SECRETS (telegram token,
   // webhook URL) belong in gitignored config.local.json or env — never committed.
   alerts: {

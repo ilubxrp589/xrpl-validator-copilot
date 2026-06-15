@@ -60,6 +60,13 @@ and read-only. Configure a channel (Telegram, or a generic webhook for Slack /
 Discord / ntfy / custom) via env or `config.local.json` (see `.env.example`). Test
 delivery with `GET /alert-test` (PIN-gated).
 
+## Investigate (code eyes)
+Point `codeRoot` at your validator's source and COP can investigate root causes by
+*reading* the code (Read / Grep / Glob only — no Bash / Edit / Write) via
+`POST /investigate` (PIN-gated). It explains likely causes with file:line references
+and never edits or runs anything. Opt-in and off by default; note it grants COP
+read access to `codeRoot`, so point it at source, not a tree full of secrets.
+
 ## Safety
 Every tool only reads. There is no code path from the copilot to a node mutation.
 Recovery guidance always comes from a loaded runbook, framed as steps for a human.
