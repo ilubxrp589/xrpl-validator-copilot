@@ -74,12 +74,13 @@ Recovery guidance always comes from a loaded runbook, framed as steps for a huma
 ## Layout
 ```
 assess.mjs       deterministic two-tier verdict (generic core + optional FFI)
-tools.mjs        read-only tool layer (standard rippled reader + FFI auto-detect)
+tools.mjs        read-only tools: rippled reader, FFI auto-detect, divergence forensics
 trend.mjs        rolling trend memory — rate-of-change over time
+watchdog.mjs     predictive alert watchdog (Telegram / webhook)
 copilot.mjs      provider dispatch (claude CLI ↔ Anthropic SDK)
-claude-cli.mjs   account-auth provider (claude -p, context injection)
+claude-cli.mjs   account-auth provider (claude -p) + investigate mode
 agent.mjs        API provider (Anthropic SDK tool-use loop)
-server.mjs       HTTP service: /health, /trend (free), /copilot (LLM)
+server.mjs       HTTP service: /health, /trend, /alert-test (free), /copilot, /investigate
 cli.mjs          ask from the terminal · healthcheck.mjs   no-LLM verdict
 runbooks/        operator SOPs (see note below)
 system-prompt.md the copilot's instructions
