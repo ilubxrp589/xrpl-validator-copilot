@@ -64,6 +64,10 @@ export const config = {
     webhookUrl: process.env.COPILOT_ALERT_WEBHOOK || LOCAL.alerts?.webhookUrl || '',
     webhookFormat: process.env.COPILOT_ALERT_FORMAT || LOCAL.alerts?.webhookFormat || 'json', // json|slack|discord|ntfy
     cooldownMin: Number(process.env.COPILOT_ALERT_COOLDOWN_MIN || 15),
+    // Scheduled health digest pushed to the same channel: 'off' (default), 'daily',
+    // or 'weekly', fired at digestHourUtc. Incident counts make it a real recap.
+    digest: process.env.COPILOT_DIGEST || LOCAL.alerts?.digest || 'off',
+    digestHourUtc: Number(process.env.COPILOT_DIGEST_HOUR_UTC ?? LOCAL.alerts?.digestHourUtc ?? 14),
   },
 
   // Network timeout for a single endpoint read (ms).

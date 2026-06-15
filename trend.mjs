@@ -109,7 +109,7 @@ export function getTrend(windowMinutes = 60) {
     ledger_age_secs: ages.length ? { min: Math.min(...ages), max: Math.max(...ages), last: last.age } : null,
     rippled_state: { from: first.state, to: last.state, changed: first.state !== last.state },
     peers: { from: first.peers, to: last.peers },
-    host_memory_pct: (() => { const v = recs.map((r) => r.host_avail).filter((x) => x != null); return v.length ? { from: first.host_avail, to: last.host_avail, delta: +((last.host_avail ?? 0) - (first.host_avail ?? 0)).toFixed(1), note: 'host available-memory %; a sustained drop is an OOM/halt early signal' } : null; })(),
+    host_memory_pct: (() => { const v = recs.filter((r) => r.host_avail != null); if (!v.length) return null; const f = v[0].host_avail, l = v[v.length - 1].host_avail; return { from: f, to: l, delta: +(l - f).toFixed(1), note: 'host available-memory %; a sustained drop is an OOM/halt early signal' }; })(),
     // FFI tier (only when the custom API is present)
     match_streak: ffi ? { from: first.cm, to: last.cm, delta: (last.cm ?? 0) - (first.cm ?? 0), per_min: perMin(first.cm, last.cm), stalled: (last.cm ?? 0) - (first.cm ?? 0) === 0 } : null,
     new_mismatches: ffi ? (last.mm ?? 0) - (first.mm ?? 0) : null,

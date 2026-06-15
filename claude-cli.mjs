@@ -17,6 +17,7 @@ import { config } from './config.mjs';
 import { readAll, runTool, divergenceBreakdownFrom, nodeProfile } from './tools.mjs';
 import { assess } from './assess.mjs';
 import { getTrend } from './trend.mjs';
+import { incidentSummary } from './incidents.mjs';
 
 const DISABLED_TOOLS = ['Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'NotebookEdit', 'TodoWrite'];
 const RUNBOOKS = ['health-check', 'drift-recovery', 'upgrade', 'spin-up'];
@@ -27,7 +28,7 @@ const MODE_NOTE = `
 You have NO tools to call in this mode. Everything described under "Tools" has
 ALREADY been read for you THIS turn and is in the <LIVE_DATA> block of the user
 message: the deterministic verdict, every signal, the raw engine / state-hash /
-consensus / rippled / host-resources payloads, a \`trend\` block (deltas & rates over the last hour — use it for any "is X growing/changing/when did it start" question), and all four runbooks. Treat
+consensus / rippled / host-resources payloads, a \`trend\` block (deltas & rates over the last hour — use it for any "is X growing/changing/when did it start" question), an \`incidents\` block (alert-worthy events over the last 7d — use it for "how often / has this happened before / been stable lately"), and all four runbooks. Treat
 <LIVE_DATA> as fresh tool output captured just now. Answer ONLY from it. If a
 question needs something not present, say which reading is missing rather than
 guessing. Report LIVE_DATA.health.verdict and LIVE_DATA.health.one_liner verbatim. If
@@ -41,6 +42,7 @@ async function buildBundle() {
   return {
     health: assess(raw),
     trend: getTrend(60),
+    incidents: incidentSummary(168),
     tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
     amendments: raw.amendments,
     validators: raw.validators,

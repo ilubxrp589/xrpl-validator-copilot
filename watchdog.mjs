@@ -8,9 +8,12 @@
 // so it won't spam.
 
 import { config } from './config.mjs';
+import { recordIncident, countOfKind } from './incidents.mjs';
 
 const A = config.alerts;
 const state = new Map(); // key -> { count, alerted, lastAlertAt, level }
+
+const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
 // The detail of each gating signal that's off — the human reason for WATCH/DEGRADED.
 function signalDetails(a) {
@@ -57,7 +60,10 @@ export async function tick(a) {
     st.count += 1; st.level = c.level;
     const cooled = now - st.lastAlertAt > A.cooldownMin * 60_000;
     if (st.count >= 2 && (!st.alerted || cooled)) {
-      await send(`${c.title}\n${c.detail}`);
+      recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: c.detail });
+      const n = countOfKind(c.key);
+      const ctx = n > 1 ? ` (${ordinal(n)} in 7d)` : '';
+      await send(`${c.title}${ctx}\n${c.detail}`);
       st.alerted = true; st.lastAlertAt = now;
     }
     state.set(c.key, st);
@@ -82,6 +88,9 @@ async function send(text) {
   } catch (e) { return { error: String(e?.message || e) }; }
   return { error: `no/unknown alert channel '${A.channel}'` };
 }
+
+// Same channel, for the scheduled digest (and anything else that wants to push).
+export const notify = (text) => send(text);
 
 async function sendTelegram(text) {
   const { token, chatId } = A.telegram;

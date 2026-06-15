@@ -99,6 +99,14 @@ and read-only. Configure a channel (Telegram, or a generic webhook for Slack /
 Discord / ntfy / custom) via env or `config.local.json` (see `.env.example`). Test
 delivery with `GET /alert-test` (PIN-gated).
 
+**Incident memory** — every alert is logged, so each new one carries context
+("3rd WATCH in 7d") and COP can answer "has the node been stable lately?". See
+`GET /incidents` (free) or the `get_incidents` tool.
+
+**Digest** — opt-in daily/weekly recap to the same channel (verdict + the period's
+incidents + a few trend highlights): set `alerts.digest` to `daily`/`weekly` (and
+optionally `digestHourUtc`). Off by default. Preview with `GET /digest-test` (PIN-gated).
+
 ## Investigate (code eyes)
 Point `codeRoot` at your validator's source and COP can investigate root causes by
 *reading* the code (Read / Grep / Glob only — no Bash / Edit / Write) via

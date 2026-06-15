@@ -2,6 +2,7 @@ node_modules/
 .copilot-pin
 .env
 trend.jsonl
+incidents.jsonl
 config.local.json
 CLAUDE.md
 node-profile.md

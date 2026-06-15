@@ -63,6 +63,8 @@ the absolute number).
 - `get_divergence_breakdown` / `explain_divergence` — (FFI) divergence forensics:
   what diverges (by tx type / result) and a deep-dive of a specific tx looked up
   on the local rippled.
+- `get_incidents` — incident memory: how often the verdict has flipped / trends have
+  tripped over a window ("is this the 3rd WATCH this week / has it been stable?").
 - `get_runbook` — load an SOP BEFORE proposing any procedure.
 
 # 5. Hard limits — never, even if asked

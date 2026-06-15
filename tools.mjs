@@ -9,6 +9,7 @@ import { cpus } from 'node:os';
 import { config } from './config.mjs';
 import { assess } from './assess.mjs';
 import { validationSnapshot } from './validations.mjs';
+import { incidentSummary, getIncidents } from './incidents.mjs';
 
 async function getJson(url) {
   const ctrl = new AbortController();
@@ -370,6 +371,11 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: { txHash: { type: 'string', description: 'optional specific tx hash; omit to auto-pick a sample' } }, additionalProperties: false },
   },
   {
+    name: 'get_incidents',
+    description: "Incident memory: alert-worthy events (verdict flips, predictive trips) recorded over time, rolled up over a window — counts by kind/level and the last incident. Use for 'how often has this happened / is this the 3rd WATCH this week / has the node been stable lately'. Local history; quiet:true means none in the window.",
+    input_schema: { type: 'object', properties: { windowHours: { type: 'integer', description: 'lookback window in hours (default 168 = 7d)' } }, additionalProperties: false },
+  },
+  {
     name: 'get_runbook',
     description: "Load an operator SOP BEFORE recommending any procedure. Names: 'health-check', 'drift-recovery', 'upgrade', 'spin-up'. Base recovery steps on the runbook text; never improvise destructive steps.",
     input_schema: { type: 'object', properties: { name: { type: 'string', enum: Object.keys(RUNBOOKS) } }, required: ['name'], additionalProperties: false },
@@ -387,6 +393,7 @@ export async function runTool(name, input = {}) {
     case 'get_amendments': return getAmendments();
     case 'get_validators': return validatorHealth();
     case 'get_validation_reliability': return validationSnapshot();
+    case 'get_incidents': return { summary: incidentSummary(input.windowHours ?? 168), recent: getIncidents(20) };
     case 'get_node_resources': return nodeResources();
     case 'get_host': return hostStats();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);

@@ -18,6 +18,8 @@ import { assess } from './assess.mjs';
 import { ask } from './copilot.mjs';
 import { startSampler, getTrend } from './trend.mjs';
 import { startValidationMonitor, setOurValidatorKeys } from './validations.mjs';
+import { incidentSummary, getIncidents } from './incidents.mjs';
+import { startDigest, sendDigestNow } from './digest.mjs';
 import * as watchdog from './watchdog.mjs';
 import { runInvestigate } from './claude-cli.mjs';
 import { readFileSync } from 'node:fs';
@@ -59,13 +61,22 @@ const server = createServer(async (req, res) => {
       const mins = Number(new URL(req.url, 'http://x').searchParams.get('mins') || 60);
       return send(res, 200, getTrend(mins));
     }
+    if (req.method === 'GET' && req.url.startsWith('/incidents')) {
+      const hrs = Number(new URL(req.url, 'http://x').searchParams.get('hours') || 168);
+      return send(res, 200, { summary: incidentSummary(hrs), recent: getIncidents(20) });
+    }
     if (req.method === 'GET' && req.url.startsWith('/alert-test')) {
       const pin = currentPin();
       if (pin && (req.headers['x-copilot-pin'] || '') !== pin) return send(res, 401, { error: 'PIN required or invalid' });
       return send(res, 200, await watchdog.sendTest());
     }
+    if (req.method === 'GET' && req.url.startsWith('/digest-test')) {
+      const pin = currentPin();
+      if (pin && (req.headers['x-copilot-pin'] || '') !== pin) return send(res, 401, { error: 'PIN required or invalid' });
+      return send(res, 200, await sendDigestNow());
+    }
     if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
-      return send(res, 200, { service: 'xrpl-validator-copilot', model: config.model, provider: config.provider, apiBase: config.apiBase, pinRequired: !!currentPin(), routes: ['GET /health', 'GET /trend', 'GET /alert-test', 'POST /copilot', 'POST /investigate'] });
+      return send(res, 200, { service: 'xrpl-validator-copilot', model: config.model, provider: config.provider, apiBase: config.apiBase, pinRequired: !!currentPin(), routes: ['GET /health', 'GET /trend', 'GET /incidents', 'GET /alert-test', 'GET /digest-test', 'POST /copilot', 'POST /investigate'] });
     }
     if (req.method === 'POST' && req.url === '/copilot') {
       if (config.provider === 'api' && !config.apiKey) return send(res, 503, { error: 'provider=api but ANTHROPIC_API_KEY not set' });
@@ -111,5 +122,6 @@ server.listen(PORT, async () => {
   try { const raw = await readAll(); setOurValidatorKeys([raw.rippled?.pubkey_validator]); } catch { /* monitor still runs in observe-only mode */ }
   startValidationMonitor();
   startSampler(undefined, watchdog.tick);
-  console.log(`trend sampler started · validation monitor: ${config.rippledWs === 'off' ? 'disabled' : 'on'} · watchdog: ${config.alerts.channel || 'disabled'}`);
+  const digestOn = startDigest();
+  console.log(`trend sampler started · validation monitor: ${config.rippledWs === 'off' ? 'disabled' : 'on'} · watchdog: ${config.alerts.channel || 'disabled'} · digest: ${digestOn ? config.alerts.digest : 'off'}`);
 });
