@@ -35,6 +35,32 @@ echo 'your-pin' > .copilot-pin
 node server.mjs        # :3780 — GET /health, GET /trend (free); POST /copilot (LLM, PIN-gated + rate-limited)
 ```
 
+## Ask it things like
+Most of these go in the dashboard's Ask box or `node cli.mjs "…"`. The ones that read
+your source use **investigate** mode (`POST /investigate`).
+
+**Health & change**
+- "Is the validator healthy right now?" / "Anything I should worry about?"
+- "What's changed in the last hour?" / "Is divergence growing, or steady?"
+- "Has the miss rate or ledger lag been creeping up?"
+
+**Amendments & upgrades**
+- "Am I current on amendments — will I get amendment-blocked?"
+- "How do I run a rippled/xrpld upgrade safely?"
+
+**Forensics** (FFI nodes)
+- "Have there been any divergences? What kind?"
+- "Explain my historical divergences — what diverged and why?"
+
+**Recovery**
+- "If the node drifted or fell behind, how would I recover?"
+
+**Investigate** (reads the source — `POST /investigate`)
+- "Why is `<some metric>` behaving this way?"
+- "Where is the state-hash comparison done in the code?"
+
+It's read-only: ask it to restart / wipe / resync and it will refuse and explain why.
+
 ## Configure
 Everything is overridable by env or a gitignored `config.local.json` (see `.env.example`):
 
