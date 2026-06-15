@@ -55,6 +55,40 @@ async function rippledInfo() {
   }
 }
 
+// Amendment awareness — read the node's `feature` data (admin RPC), cached ~5 min
+// (amendments move over days). Flags amendments this node does NOT support, so COP
+// can warn before the node falls out of consensus.
+let _amend = null;
+async function getAmendments() {
+  if (_amend && Date.now() - _amend.ts < 300_000) return _amend.data;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), config.fetchTimeoutMs);
+  let data;
+  try {
+    const res = await fetch(config.rippledRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'feature' }), signal: ctrl.signal });
+    const r = (await res.json())?.result;
+    if (!r || r.error || !r.features) {
+      data = { available: false, note: r?.error ? `feature: ${r.error} (admin RPC required)` : 'no amendment data' };
+    } else {
+      const all = Object.values(r.features);
+      const unsupported = all.filter((a) => a.supported === false).map((a) => ({ name: a.name, enabled: !!a.enabled, majority: a.majority ?? null }));
+      data = { available: true, total: all.length, enabled: all.filter((a) => a.enabled).length, supports_all: unsupported.length === 0, unsupported };
+    }
+  } catch (e) { data = { available: false, note: String(e?.message || e) }; }
+  finally { clearTimeout(t); }
+  _amend = { data, ts: Date.now() };
+  return data;
+}
+
+// Operator's local "known-normal + known-issues" notes for THIS node (gitignored).
+let _profile = null;
+export async function nodeProfile() {
+  if (_profile !== null) return _profile;
+  try { _profile = (await readFile(new URL('./node-profile.md', import.meta.url), 'utf8')).trim(); }
+  catch { _profile = ''; }
+  return _profile;
+}
+
 /**
  * Read both tiers. The generic core (rippled server_info) ALWAYS runs. The FFI
  * tier is fetched only when config.apiBase is set AND its /api/engine responds —
@@ -63,7 +97,7 @@ async function rippledInfo() {
  */
 export async function readAll() {
   const errors = [];
-  const rippled = await rippledInfo();
+  const [rippled, amendments] = await Promise.all([rippledInfo(), getAmendments()]);
 
   let ffi = null, ffiAvailable = false;
   if (config.apiBase) {
@@ -82,7 +116,7 @@ export async function readAll() {
       ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
     }
   }
-  return { rippled, ffi, ffiAvailable, errors };
+  return { rippled, amendments, ffi, ffiAvailable, errors };
 }
 
 async function nodeResources() {
@@ -234,6 +268,11 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'get_amendments',
+    description: 'Amendment status: total amendments, how many are enabled, and any this node does NOT support (with whether each is already active or approaching). Use for "am I current on amendments / will I get amendment-blocked / what should I upgrade for". Requires admin RPC; returns available:false otherwise.',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'get_node_resources',
     description: 'Host CPU/RAM/disk/net from an optional metrics sidecar (only if one is configured).',
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
@@ -268,6 +307,7 @@ export async function runTool(name, input = {}) {
     case 'get_engine_detail': { const r = await readAll(); return r.ffi?.engine ?? { error: 'FFI engine API not available on this node (generic-core mode)', read_errors: r.errors }; }
     case 'get_state_hash_detail': { const r = await readAll(); return r.ffi?.stateHash ?? { error: 'FFI state-hash API not available on this node (generic-core mode)', read_errors: r.errors }; }
     case 'get_rippled_status': return rippledInfo();
+    case 'get_amendments': return getAmendments();
     case 'get_node_resources': return nodeResources();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);
     case 'get_divergence_breakdown': return divergenceBreakdownFrom(await readAll());

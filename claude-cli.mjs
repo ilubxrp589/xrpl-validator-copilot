@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { config } from './config.mjs';
-import { readAll, runTool, divergenceBreakdownFrom } from './tools.mjs';
+import { readAll, runTool, divergenceBreakdownFrom, nodeProfile } from './tools.mjs';
 import { assess } from './assess.mjs';
 import { getTrend } from './trend.mjs';
 
@@ -30,7 +30,9 @@ message: the deterministic verdict, every signal, the raw engine / state-hash /
 consensus / rippled / host-resources payloads, a \`trend\` block (deltas & rates over the last hour — use it for any "is X growing/changing/when did it start" question), and all four runbooks. Treat
 <LIVE_DATA> as fresh tool output captured just now. Answer ONLY from it. If a
 question needs something not present, say which reading is missing rather than
-guessing. Report LIVE_DATA.health.verdict and LIVE_DATA.health.one_liner verbatim.`;
+guessing. Report LIVE_DATA.health.verdict and LIVE_DATA.health.one_liner verbatim. If
+LIVE_DATA.node_profile is present, it's the operator's notes on what's NORMAL and
+what's KNOWN for this specific node — weight it heavily and don't re-flag known quirks.`;
 
 const load = (rel) => readFile(new URL(rel, import.meta.url), 'utf8');
 
@@ -40,7 +42,9 @@ async function buildBundle() {
     health: assess(raw),
     trend: getTrend(60),
     tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
+    amendments: raw.amendments,
     divergences: await divergenceBreakdownFrom(raw),
+    node_profile: await nodeProfile(),
     raw: { rippled: raw.rippled, ffi: raw.ffi },
     resources: await runTool('get_node_resources'),
   };
@@ -112,9 +116,10 @@ Rules:
 
 export async function runInvestigate(question) {
   if (!config.codeRoot) return { reply: 'Investigate mode is not configured (set codeRoot to the validator source dir).', provider: 'investigate', toolsUsed: [] };
-  let health = '';
+  let health = '', profile = '';
   try { const a = assess(await readAll()); health = `Live node verdict: ${a.verdict} — ${a.one_liner}\n\n`; } catch { /* ignore */ }
-  const prompt = `${health}INVESTIGATE: ${question}`;
+  try { const p = await nodeProfile(); if (p) profile = `Operator's node profile (known-normal / known-issues — trust this):\n${p}\n\n`; } catch { /* ignore */ }
+  const prompt = `${profile}${health}INVESTIGATE: ${question}`;
   return new Promise((resolve, reject) => {
     const args = [
       '-p', prompt,

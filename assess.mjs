@@ -32,9 +32,7 @@ function genericSignals(r) {
     detail: `server_state=${st}${HEALTHY_STATES.includes(st) ? '' : SYNC_STATES.includes(st) ? ' (catching up)' : ' (unhealthy)'} · rippled ${r.build_version ?? '?'}`,
     server_state: st,
   };
-  s.amendments = r.amendment_blocked
-    ? { status: 'degraded', detail: 'AMENDMENT-BLOCKED — out of consensus until upgraded to support the newly-activated amendment(s)', blocked: true }
-    : { status: 'ok', detail: 'not amendment-blocked' };
+  // amendments signal is computed in assess() — it also needs the `feature` pipeline data.
   if (r.validated_seq == null) {
     s.ledger = { status: 'degraded', detail: 'no validated ledger — not following the network' };
   } else {
@@ -116,10 +114,29 @@ function ffiSignals(ffi, rippled) {
   return s;
 }
 
-/** @param bundle { rippled, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */
+// Amendment health: reactive (amendment_blocked) + predictive (unsupported amendments
+// from the `feature` pipeline). Active-unsupported = blocked now; approaching/future =
+// upgrade-before-it-bites warnings.
+function amendmentSignal(r, am) {
+  if (r?.amendment_blocked) return { status: 'degraded', detail: 'AMENDMENT-BLOCKED — out of consensus until upgraded', blocked: true };
+  if (am?.available) {
+    const unsup = am.unsupported || [];
+    const active = unsup.filter((a) => a.enabled);
+    const approaching = unsup.filter((a) => !a.enabled && a.majority);
+    const future = unsup.filter((a) => !a.enabled && !a.majority);
+    if (active.length) return { status: 'degraded', detail: `does NOT support ${active.length} ACTIVE amendment(s): ${active.map((a) => a.name).join(', ')} — upgrade now`, blocked: true };
+    if (approaching.length) return { status: 'watch', detail: `amendment(s) with majority this node does NOT support: ${approaching.map((a) => a.name).join(', ')} — activates ~2 weeks after majority; upgrade before then or be blocked` };
+    if (future.length) return { status: 'watch', detail: `does not yet support ${future.length} amendment(s): ${future.map((a) => a.name).join(', ')} — no majority yet; upgrade to stay safe` };
+    return { status: 'ok', detail: `not amendment-blocked; supports all ${am.total} known amendments` };
+  }
+  return { status: 'ok', detail: 'not amendment-blocked' };
+}
+
+/** @param bundle { rippled, amendments, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */
 export function assess(bundle) {
   const { rippled, ffi, ffiAvailable, errors = [] } = bundle;
   const signals = { ...genericSignals(rippled) };
+  signals.amendments = amendmentSignal(rippled, bundle.amendments);
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));
 
   const gating = Object.entries(signals).filter(([, x]) => !x.informational);

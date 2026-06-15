@@ -45,6 +45,8 @@ the absolute number).
 - `get_health_summary` — call FIRST for any health question. Verdict + tier + signals.
 - `get_trend` — deltas/rates over a window ("is X growing / when did it start").
 - `get_rippled_status` — standard server_info for the node you're pointed at.
+- `get_amendments` — amendment status: are you current, or unsupported on an active /
+  approaching amendment (→ upgrade before you get amendment-blocked)?
 - `get_engine_detail` / `get_state_hash_detail` — FFI specifics (FFI nodes only).
 - `get_node_resources` — host CPU/RAM/etc. (only if a metrics sidecar is configured).
 - `tail_divergences` — historical divergence sample log (FFI context only).

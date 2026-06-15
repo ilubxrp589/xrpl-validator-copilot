@@ -7,7 +7,8 @@ never restarts, wipes, signs, or changes anything: it diagnoses and advises, you
 
 ## Two tiers
 - **Generic core** — works on ANY node using standard `server_info`: `server_state`,
-  **amendment-blocked**, validated-ledger age, history gaps, peers, load, consensus,
+  **amendment status** (blocked now, or unsupported/approaching → upgrade warning),
+  validated-ledger age, history gaps, peers, load, consensus,
   whether it's a configured validator. Point it at your rippled and go.
 - **Optional FFI enhancement** — if your node also exposes a custom validator API
   with an FFI shadow-verifier (state-hash match streak, apply/shadow divergence,
@@ -47,6 +48,10 @@ Everything is overridable by env or a gitignored `config.local.json` (see `.env.
 
 The `.copilot-pin` file (or `COPILOT_PIN`) gates the paid `/copilot` endpoint; `/health`
 and `/trend` stay open. A per-IP rate limit caps spend even if the PIN is shared.
+
+Optional `node-profile.md` (gitignored): jot your node's *known-normal* and
+*known-issues*, and COP weaves it into its health context and investigate mode — so it
+stops re-flagging quirks you already understand.
 
 ## Verdict
 `HEALTHY · WATCH · SYNCING · DEGRADED · AMENDMENT_BLOCKED · HALT_SUSPECTED · UNREACHABLE`,
