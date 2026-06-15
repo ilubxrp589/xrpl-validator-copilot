@@ -81,6 +81,46 @@ async function getAmendments() {
   return data;
 }
 
+// Validator-list / UNL health — reads the `validators` admin RPC (cached ~60s; it
+// changes slowly). An expired or unreachable validator list is a quiet way to fall
+// out of consensus: the node loses its trusted set and stops agreeing. Generic —
+// applies to ANY node that follows consensus, validator or not.
+let _vals = null;
+async function validatorHealth() {
+  if (_vals && Date.now() - _vals.ts < 60_000) return _vals.data;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), config.fetchTimeoutMs);
+  let data;
+  try {
+    const res = await fetch(config.rippledRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'validators' }), signal: ctrl.signal });
+    const r = (await res.json())?.result;
+    if (!r || r.error) {
+      data = { available: false, note: r?.error ? `validators: ${r.error} (admin RPC required)` : 'no validator-list data' };
+    } else {
+      const now = Date.now();
+      const lists = (r.publisher_lists || []).map((p) => {
+        const ms = p.expiration ? Date.parse(String(p.expiration).replace(/\.\d+/, '')) : NaN;   // strip nanos
+        return { available: p.available !== false, keys: Array.isArray(p.list) ? p.list.length : null, expiration: p.expiration ?? null, days_until_expiry: Number.isFinite(ms) ? +((ms - now) / 86_400_000).toFixed(1) : null };
+      });
+      const withDays = lists.filter((l) => l.days_until_expiry != null);
+      const soonest = withDays.length ? withDays.reduce((m, l) => (l.days_until_expiry < m.days_until_expiry ? l : m)) : null;
+      data = {
+        available: true,
+        validation_quorum: r.validation_quorum ?? null,
+        trusted_keys: Array.isArray(r.trusted_validator_keys) ? r.trusted_validator_keys.length : null,
+        local_static_keys: Array.isArray(r.local_static_keys) ? r.local_static_keys.length : 0,
+        publisher_lists: lists,
+        soonest_expiry: soonest?.expiration ?? null,
+        soonest_days: soonest?.days_until_expiry ?? null,
+        any_list_unavailable: lists.some((l) => !l.available),
+      };
+    }
+  } catch (e) { data = { available: false, note: String(e?.message || e) }; }
+  finally { clearTimeout(t); }
+  _vals = { data, ts: Date.now() };
+  return data;
+}
+
 // Operator's local "known-normal + known-issues" notes for THIS node (gitignored).
 let _profile = null;
 export async function nodeProfile() {
@@ -118,7 +158,7 @@ async function hostStats() {
  */
 export async function readAll() {
   const errors = [];
-  const [rippled, amendments, host] = await Promise.all([rippledInfo(), getAmendments(), hostStats()]);
+  const [rippled, amendments, host, validators] = await Promise.all([rippledInfo(), getAmendments(), hostStats(), validatorHealth()]);
 
   let ffi = null, ffiAvailable = false;
   if (config.apiBase) {
@@ -137,7 +177,7 @@ export async function readAll() {
       ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
     }
   }
-  return { rippled, amendments, host, ffi, ffiAvailable, errors };
+  return { rippled, amendments, host, validators, ffi, ffiAvailable, errors };
 }
 
 async function nodeResources() {
@@ -299,6 +339,11 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'get_validators',
+    description: "Validator-list / UNL health from the `validators` admin RPC: validation_quorum, count of trusted validator keys, and each published list's availability + expiration (with days-until-expiry). Use for 'is my UNL healthy / when does my validator list expire / am I going to lose my trusted set'. An expired or unreachable list silently drops the node out of consensus. Requires admin RPC; returns available:false otherwise. Surfaces in get_health_summary as the `validator_list` signal.",
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'get_host',
     description: "Memory/load of the box the copilot runs on (best-effort Linux /proc, no sidecar needed): total/available RAM (GB and %), swap used, and 1-min load vs core count. Use for 'is the host low on memory / at OOM risk'. Low available memory on a node's host is a classic precursor to an OOM kill → incomplete data → halt. Returns available:false off Linux.",
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
@@ -334,6 +379,7 @@ export async function runTool(name, input = {}) {
     case 'get_state_hash_detail': { const r = await readAll(); return r.ffi?.stateHash ?? { error: 'FFI state-hash API not available on this node (generic-core mode)', read_errors: r.errors }; }
     case 'get_rippled_status': return rippledInfo();
     case 'get_amendments': return getAmendments();
+    case 'get_validators': return validatorHealth();
     case 'get_node_resources': return nodeResources();
     case 'get_host': return hostStats();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);

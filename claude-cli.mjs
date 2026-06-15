@@ -43,6 +43,7 @@ async function buildBundle() {
     trend: getTrend(60),
     tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
     amendments: raw.amendments,
+    validators: raw.validators,
     divergences: await divergenceBreakdownFrom(raw),
     node_profile: await nodeProfile(),
     host: raw.host,

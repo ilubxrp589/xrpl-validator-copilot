@@ -132,6 +132,22 @@ function amendmentSignal(r, am) {
   return { status: 'ok', detail: 'not amendment-blocked' };
 }
 
+// Validator-list / UNL health. An expired or non-refreshing trusted list quietly
+// drops a node out of consensus (it loses its trusted set). Generic — any node that
+// follows consensus has a UNL. Omitted entirely when the admin RPC isn't available,
+// so a public/stock RPC node isn't gated on a reading it can't take.
+function validatorListSignal(v) {
+  if (!v?.available) return null;
+  const tk = v.trusted_keys ?? 0;
+  const soon = v.soonest_days;
+  const exp = v.soonest_expiry ? String(v.soonest_expiry).split(' ')[0] : null;   // date only, drop time/nanos
+  if (tk === 0) return { status: 'degraded', detail: 'no trusted validator keys — node cannot follow consensus (UNL empty or unreachable)' };
+  if (soon != null && soon < 0) return { status: 'degraded', detail: `validator list EXPIRED ${Math.abs(soon)}d ago — node has lost its trusted set; restore publisher-list reachability`, soonest_days: soon };
+  if (v.any_list_unavailable) return { status: 'watch', detail: `a validator list is unavailable (not refreshing) — ${tk} trusted keys, quorum ${v.validation_quorum ?? '?'}; check publisher reachability` };
+  if (soon != null && soon < 3) return { status: 'watch', detail: `validator list expires in ${soon}d (${exp}) — should auto-refresh; flag if it doesn't`, soonest_days: soon };
+  return { status: 'ok', detail: `${v.publisher_lists?.length ?? 0} validator list(s), ${tk} trusted keys, quorum ${v.validation_quorum ?? '?'}; soonest expiry ${soon != null ? `${soon}d (${exp})` : 'n/a'}`, soonest_days: soon };
+}
+
 // Host memory of the box the copilot (ideally the node too) runs on. Low available
 // memory is an OOM precursor, and OOM on a node's host causes incomplete data → halt.
 function hostMemorySignal(h) {
@@ -151,6 +167,8 @@ export function assess(bundle) {
   const { rippled, ffi, ffiAvailable, errors = [] } = bundle;
   const signals = { ...genericSignals(rippled) };
   signals.amendments = amendmentSignal(rippled, bundle.amendments);
+  const vList = validatorListSignal(bundle.validators);
+  if (vList) signals.validator_list = vList;
   const hostMem = hostMemorySignal(bundle.host);
   if (hostMem) signals.host_memory = hostMem;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));

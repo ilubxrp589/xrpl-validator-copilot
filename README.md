@@ -49,6 +49,10 @@ your source use **investigate** mode (`POST /investigate`).
 - "Am I current on amendments — will I get amendment-blocked?"
 - "How do I run a rippled/xrpld upgrade safely?"
 
+**Consensus & UNL**
+- "Is my UNL healthy — when does my validator list expire?" (`validator_list` signal)
+- "What's my quorum and how many trusted validators do I have?"
+
 **Forensics** (FFI nodes)
 - "Have there been any divergences? What kind?"
 - "Explain my historical divergences — what diverged and why?"
