@@ -52,6 +52,8 @@ your source use **investigate** mode (`POST /investigate`).
 **Consensus & UNL**
 - "Is my UNL healthy — when does my validator list expire?" (`validator_list` signal)
 - "What's my quorum and how many trusted validators do I have?"
+- "Am I issuing validations and agreeing with the network?" (`validation` signal)
+- "How many validators am I hearing from each ledger?"
 
 **Forensics** (FFI nodes)
 - "Have there been any divergences? What kind?"
@@ -73,6 +75,7 @@ Everything is overridable by env or a gitignored `config.local.json` (see `.env.
 |-----|------|
 | `COPILOT_RIPPLED_RPC` | your node's JSON-RPC (required) |
 | `COPILOT_API_BASE` | optional custom FFI validator API (empty if none) |
+| `COPILOT_RIPPLED_WS` | validations-stream WS (empty → derived from RPC; `off` to disable) |
 | `COPILOT_METRICS_BASE` | optional host-metrics sidecar |
 | `COPILOT_MODEL` | default `claude-opus-4-8`; `claude-sonnet-4-6` for cheaper/faster |
 | `COPILOT_PROVIDER` | `cli` (claude account, default) or `api` (needs `ANTHROPIC_API_KEY`) |

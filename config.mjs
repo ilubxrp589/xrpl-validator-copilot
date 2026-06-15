@@ -17,6 +17,11 @@ export const config = {
   // generic health verdict that works on any node.
   rippledRpc: process.env.COPILOT_RIPPLED_RPC || LOCAL.rippledRpc || 'http://localhost:5005',
 
+  // OPTIONAL — WebSocket endpoint for the live `validations` stream (network
+  // participation + this node's own validation reliability). Empty → derived from
+  // rippledRpc (admin RPC :5005 commonly pairs with WS :6006). Set to 'off' to disable.
+  rippledWs: process.env.COPILOT_RIPPLED_WS || LOCAL.rippledWs || '',
+
   // OPTIONAL — a custom validator API exposing an FFI shadow-verifier
   // (/api/engine, /api/state-hash, ...). Most nodes don't have this; leave empty.
   // If set and its /api/engine responds, COP layers deeper correctness signals on top.

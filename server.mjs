@@ -17,6 +17,7 @@ import { readAll } from './tools.mjs';
 import { assess } from './assess.mjs';
 import { ask } from './copilot.mjs';
 import { startSampler, getTrend } from './trend.mjs';
+import { startValidationMonitor, setOurValidatorKeys } from './validations.mjs';
 import * as watchdog from './watchdog.mjs';
 import { runInvestigate } from './claude-cli.mjs';
 import { readFileSync } from 'node:fs';
@@ -104,8 +105,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`validator-copilot listening on :${PORT}  (provider ${config.provider}, model ${config.model}, pin ${currentPin() ? 'ON' : 'OFF — open'}, reading ${config.apiBase})`);
+  // Tell the validation monitor which key is "ours" (if this node is a validator), then connect.
+  try { const raw = await readAll(); setOurValidatorKeys([raw.rippled?.pubkey_validator]); } catch { /* monitor still runs in observe-only mode */ }
+  startValidationMonitor();
   startSampler(undefined, watchdog.tick);
-  console.log(`trend sampler started · watchdog: ${config.alerts.channel || 'disabled'}`);
+  console.log(`trend sampler started · validation monitor: ${config.rippledWs === 'off' ? 'disabled' : 'on'} · watchdog: ${config.alerts.channel || 'disabled'}`);
 });

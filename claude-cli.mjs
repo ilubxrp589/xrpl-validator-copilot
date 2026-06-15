@@ -44,6 +44,7 @@ async function buildBundle() {
     tier: raw.ffiAvailable ? 'generic+ffi' : 'generic',
     amendments: raw.amendments,
     validators: raw.validators,
+    validations: raw.validations,
     divergences: await divergenceBreakdownFrom(raw),
     node_profile: await nodeProfile(),
     host: raw.host,

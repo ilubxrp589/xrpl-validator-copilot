@@ -148,6 +148,29 @@ function validatorListSignal(v) {
   return { status: 'ok', detail: `${v.publisher_lists?.length ?? 0} validator list(s), ${tk} trusted keys, quorum ${v.validation_quorum ?? '?'}; soonest expiry ${soon != null ? `${soon}d (${exp})` : 'n/a'}`, soonest_days: soon };
 }
 
+// Live validation reliability (from the validations-stream monitor). For a validator:
+// are we issuing full validations and agreeing with the network? For a non-validator:
+// network participation observation only (informational). Omitted until the monitor
+// has a window. `warming up` avoids false alarms before the window fills.
+function validationSignal(snap, rippled, vals) {
+  if (!snap?.available) return null;
+  const quorum = vals?.validation_quorum ?? rippled?.validation_quorum ?? null;
+  const netRecent = snap.network?.recent_avg ?? snap.network?.avg_validators_per_ledger ?? null;
+  const netStr = `~${netRecent ?? '?'} validators/ledger${quorum ? ` (quorum ${quorum})` : ''} over ${snap.window_ledgers} ledger(s)`;
+
+  if (snap.is_validator && snap.reliability) {
+    const r = snap.reliability;
+    if (r.window_ledgers < 8) return { status: 'ok', detail: `validation monitor warming up (${r.window_ledgers} ledger(s) observed)`, ...r };
+    if (r.recent_window > 0 && r.recent_issued === 0) return { status: 'degraded', detail: `configured validator but issued NO validations in the last ${r.recent_window} ledgers — check server_state=proposing and the validator key`, ...r };
+    if (r.agreement_pct != null && r.agreement_pct < 100) return { status: 'degraded', detail: `our validations DISAGREE with the network on ${(100 - r.agreement_pct).toFixed(1)}% of ledgers (agreement ${r.agreement_pct}%) — possible fork / amendment gap`, ...r };
+    if (r.reliability_pct < 90) return { status: 'watch', detail: `issuing validations on only ${r.reliability_pct}% of ledgers (${r.issued}/${r.window_ledgers}) — missing some`, ...r };
+    return { status: 'ok', detail: `issuing full validations · reliability ${r.reliability_pct}% · agreement ${r.agreement_pct ?? 100}% over ${r.window_ledgers} ledgers`, ...r };
+  }
+  // non-validator: observe consensus visibility only (never gates the verdict)
+  const low = quorum && netRecent != null && netRecent < quorum;
+  return { status: low ? 'watch' : 'ok', informational: true, detail: `observing ${netStr} — consensus visibility${low ? ' BELOW quorum (low visibility)' : ' healthy'} (this node isn't a validator)` };
+}
+
 // Host memory of the box the copilot (ideally the node too) runs on. Low available
 // memory is an OOM precursor, and OOM on a node's host causes incomplete data → halt.
 function hostMemorySignal(h) {
@@ -169,6 +192,8 @@ export function assess(bundle) {
   signals.amendments = amendmentSignal(rippled, bundle.amendments);
   const vList = validatorListSignal(bundle.validators);
   if (vList) signals.validator_list = vList;
+  const vSig = validationSignal(bundle.validations, rippled, bundle.validators);
+  if (vSig) signals.validation = vSig;
   const hostMem = hostMemorySignal(bundle.host);
   if (hostMem) signals.host_memory = hostMem;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));

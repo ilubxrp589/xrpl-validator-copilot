@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { cpus } from 'node:os';
 import { config } from './config.mjs';
 import { assess } from './assess.mjs';
+import { validationSnapshot } from './validations.mjs';
 
 async function getJson(url) {
   const ctrl = new AbortController();
@@ -177,7 +178,7 @@ export async function readAll() {
       ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
     }
   }
-  return { rippled, amendments, host, validators, ffi, ffiAvailable, errors };
+  return { rippled, amendments, host, validators, validations: validationSnapshot(), ffi, ffiAvailable, errors };
 }
 
 async function nodeResources() {
@@ -344,6 +345,11 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'get_validation_reliability',
+    description: "Live validation-stream view (rolling window): NETWORK participation — distinct validators heard per ledger from this node's vantage — and, if THIS node is a validator, its own RELIABILITY (are we issuing a validation every ledger, is it full) and AGREEMENT (does our ledger hash match the network's). Use for 'am I issuing validations / am I agreeing with the network / how reliable is my validator / how many validators do I see'. Needs the WS validations stream; a non-validator node reports network observation only (is_validator:false).",
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'get_host',
     description: "Memory/load of the box the copilot runs on (best-effort Linux /proc, no sidecar needed): total/available RAM (GB and %), swap used, and 1-min load vs core count. Use for 'is the host low on memory / at OOM risk'. Low available memory on a node's host is a classic precursor to an OOM kill → incomplete data → halt. Returns available:false off Linux.",
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
@@ -380,6 +386,7 @@ export async function runTool(name, input = {}) {
     case 'get_rippled_status': return rippledInfo();
     case 'get_amendments': return getAmendments();
     case 'get_validators': return validatorHealth();
+    case 'get_validation_reliability': return validationSnapshot();
     case 'get_node_resources': return nodeResources();
     case 'get_host': return hostStats();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);

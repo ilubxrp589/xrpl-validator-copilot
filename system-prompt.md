@@ -50,6 +50,10 @@ the absolute number).
 - `get_validators` — validator-list / UNL health: quorum, trusted-key count, and list
   expiry. An expired/non-refreshing list silently drops you from consensus. Surfaces
   as the `validator_list` signal (degraded if expired/no keys, watch if not refreshing).
+- `get_validation_reliability` — live validations-stream view: network participation
+  (validators heard per ledger) and, if this node IS a validator, whether it's issuing
+  full validations and AGREEING with the network. Surfaces as the `validation` signal;
+  on a non-validator it's network-observation only (informational).
 - `get_engine_detail` / `get_state_hash_detail` — FFI specifics (FFI nodes only).
 - `get_node_resources` — host CPU/RAM/etc. (only if a metrics sidecar is configured).
 - `get_host` — memory/load of the box COP runs on (Linux /proc, no sidecar). Low
