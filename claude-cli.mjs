@@ -45,6 +45,7 @@ async function buildBundle() {
     amendments: raw.amendments,
     divergences: await divergenceBreakdownFrom(raw),
     node_profile: await nodeProfile(),
+    host: raw.host,
     raw: { rippled: raw.rippled, ffi: raw.ffi },
     resources: await runTool('get_node_resources'),
   };

@@ -5,6 +5,7 @@
 // way. That invariant is what makes the copilot safe to point at production.
 
 import { readFile } from 'node:fs/promises';
+import { cpus } from 'node:os';
 import { config } from './config.mjs';
 import { assess } from './assess.mjs';
 
@@ -89,6 +90,26 @@ export async function nodeProfile() {
   return _profile;
 }
 
+// Memory/load of the host the copilot runs on (best-effort, Linux /proc). Co-locate
+// the copilot with your node so this watches the box whose OOM would take it down —
+// memory exhaustion on a node's host is a classic cause of incomplete data → halt.
+async function hostStats() {
+  try {
+    const mi = await readFile('/proc/meminfo', 'utf8');
+    const kb = (k) => { const m = mi.match(new RegExp(`^${k}:\\s+(\\d+) kB`, 'm')); return m ? Number(m[1]) / 1048576 : null; };
+    const total = kb('MemTotal'), avail = kb('MemAvailable'), swapT = kb('SwapTotal'), swapF = kb('SwapFree');
+    if (total == null || avail == null) return { available: false, note: 'could not parse /proc/meminfo' };
+    let load1 = null;
+    try { load1 = Number((await readFile('/proc/loadavg', 'utf8')).split(' ')[0]); } catch { /* */ }
+    return {
+      available: true,
+      total_gb: +total.toFixed(1), available_gb: +avail.toFixed(1), available_pct: +(100 * avail / total).toFixed(1),
+      swap_used_gb: swapT != null && swapF != null ? +(swapT - swapF).toFixed(1) : null, swap_total_gb: swapT != null ? +swapT.toFixed(1) : null,
+      load1, cores: cpus().length,
+    };
+  } catch { return { available: false, note: 'host metrics unavailable (no /proc/meminfo)' }; }
+}
+
 /**
  * Read both tiers. The generic core (rippled server_info) ALWAYS runs. The FFI
  * tier is fetched only when config.apiBase is set AND its /api/engine responds —
@@ -97,7 +118,7 @@ export async function nodeProfile() {
  */
 export async function readAll() {
   const errors = [];
-  const [rippled, amendments] = await Promise.all([rippledInfo(), getAmendments()]);
+  const [rippled, amendments, host] = await Promise.all([rippledInfo(), getAmendments(), hostStats()]);
 
   let ffi = null, ffiAvailable = false;
   if (config.apiBase) {
@@ -116,7 +137,7 @@ export async function readAll() {
       ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
     }
   }
-  return { rippled, amendments, ffi, ffiAvailable, errors };
+  return { rippled, amendments, host, ffi, ffiAvailable, errors };
 }
 
 async function nodeResources() {
@@ -278,6 +299,11 @@ export const toolDefs = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'get_host',
+    description: "Memory/load of the box the copilot runs on (best-effort Linux /proc, no sidecar needed): total/available RAM (GB and %), swap used, and 1-min load vs core count. Use for 'is the host low on memory / at OOM risk'. Low available memory on a node's host is a classic precursor to an OOM kill → incomplete data → halt. Returns available:false off Linux.",
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'tail_divergences',
     description: 'Last N entries from the historical divergence sample log. SAMPLE/context only — not the live divergence signal.',
     input_schema: { type: 'object', properties: { n: { type: 'integer', description: 'how many entries (default 10, max 100)' } }, additionalProperties: false },
@@ -309,6 +335,7 @@ export async function runTool(name, input = {}) {
     case 'get_rippled_status': return rippledInfo();
     case 'get_amendments': return getAmendments();
     case 'get_node_resources': return nodeResources();
+    case 'get_host': return hostStats();
     case 'tail_divergences': return tailDivergences(input.n ?? 10);
     case 'get_divergence_breakdown': return divergenceBreakdownFrom(await readAll());
     case 'explain_divergence': return explainDivergence(input.txHash);

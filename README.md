@@ -43,6 +43,7 @@ your source use **investigate** mode (`POST /investigate`).
 - "Is the validator healthy right now?" / "Anything I should worry about?"
 - "What's changed in the last hour?" / "Is divergence growing, or steady?"
 - "Has the miss rate or ledger lag been creeping up?"
+- "Is the host low on memory — any OOM/halt risk?" (host RAM is a `host_memory` signal)
 
 **Amendments & upgrades**
 - "Am I current on amendments — will I get amendment-blocked?"

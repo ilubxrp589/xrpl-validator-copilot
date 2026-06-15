@@ -132,11 +132,27 @@ function amendmentSignal(r, am) {
   return { status: 'ok', detail: 'not amendment-blocked' };
 }
 
-/** @param bundle { rippled, amendments, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */
+// Host memory of the box the copilot (ideally the node too) runs on. Low available
+// memory is an OOM precursor, and OOM on a node's host causes incomplete data → halt.
+function hostMemorySignal(h) {
+  if (!h?.available) return null;
+  const pct = h.available_pct, gb = h.available_gb;
+  const status = (pct < 7 || gb < 1.5) ? 'degraded' : pct < 15 ? 'watch' : 'ok';
+  const swap = h.swap_total_gb ? `, swap ${h.swap_used_gb}/${h.swap_total_gb}GB` : '';
+  return {
+    status,
+    detail: `host memory ${gb}GB available (${pct}% of ${h.total_gb}GB)${swap}, load ${h.load1 ?? '?'}/${h.cores}c${status !== 'ok' ? ' — LOW: OOM/halt risk' : ''}`,
+    available_pct: pct, available_gb: gb,
+  };
+}
+
+/** @param bundle { rippled, amendments, host, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */
 export function assess(bundle) {
   const { rippled, ffi, ffiAvailable, errors = [] } = bundle;
   const signals = { ...genericSignals(rippled) };
   signals.amendments = amendmentSignal(rippled, bundle.amendments);
+  const hostMem = hostMemorySignal(bundle.host);
+  if (hostMem) signals.host_memory = hostMem;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));
 
   const gating = Object.entries(signals).filter(([, x]) => !x.informational);

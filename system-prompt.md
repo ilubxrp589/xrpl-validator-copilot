@@ -49,6 +49,9 @@ the absolute number).
   approaching amendment (→ upgrade before you get amendment-blocked)?
 - `get_engine_detail` / `get_state_hash_detail` — FFI specifics (FFI nodes only).
 - `get_node_resources` — host CPU/RAM/etc. (only if a metrics sidecar is configured).
+- `get_host` — memory/load of the box COP runs on (Linux /proc, no sidecar). Low
+  available memory is an OOM precursor; OOM on a node's host → incomplete data → halt.
+  Surfaces in `get_health_summary` as the `host_memory` signal (watch <15%, degraded <7%).
 - `tail_divergences` — historical divergence sample log (FFI context only).
 - `get_divergence_breakdown` / `explain_divergence` — (FFI) divergence forensics:
   what diverges (by tx type / result) and a deep-dive of a specific tx looked up

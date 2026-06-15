@@ -55,6 +55,7 @@ export async function sample() {
     state: s.server_state?.server_state ?? null,          // generic
     age: s.ledger?.age ?? null,                           // generic — ledger currency
     peers: s.peers?.peers ?? null,                        // generic
+    host_avail: s.host_memory?.available_pct ?? null,     // generic — host mem % (OOM watch)
     ram,
   };
   ring.push(rec);
@@ -108,6 +109,7 @@ export function getTrend(windowMinutes = 60) {
     ledger_age_secs: ages.length ? { min: Math.min(...ages), max: Math.max(...ages), last: last.age } : null,
     rippled_state: { from: first.state, to: last.state, changed: first.state !== last.state },
     peers: { from: first.peers, to: last.peers },
+    host_memory_pct: (() => { const v = recs.map((r) => r.host_avail).filter((x) => x != null); return v.length ? { from: first.host_avail, to: last.host_avail, delta: +((last.host_avail ?? 0) - (first.host_avail ?? 0)).toFixed(1), note: 'host available-memory %; a sustained drop is an OOM/halt early signal' } : null; })(),
     // FFI tier (only when the custom API is present)
     match_streak: ffi ? { from: first.cm, to: last.cm, delta: (last.cm ?? 0) - (first.cm ?? 0), per_min: perMin(first.cm, last.cm), stalled: (last.cm ?? 0) - (first.cm ?? 0) === 0 } : null,
     new_mismatches: ffi ? (last.mm ?? 0) - (first.mm ?? 0) : null,
