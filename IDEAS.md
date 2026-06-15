@@ -2,6 +2,22 @@
 
 Captured 2026-06-14. Not built — pick what's worth it.
 
+**Update 2026-06-15:** most of the list below shipped — trend memory, proactive alerts
+(Telegram), per-tx divergence deep-dive, incident memory, upstream root-cause (investigate
+found the frozen-`engine.ledger_seq` `break` bug), and the daily digest are all built.
+Plus host-memory OOM signal, UNL/validator-list health, and live validation-stream
+monitoring. Remaining / new ideas below.
+
+## Planned — design approved (not yet built)
+- **Amendment vote board.** Read-only dashboard section: every amendment × our vote stance
+  (YES / abstain) × live network status (enabled / in-voting+majority / not-yet), with a
+  flag where an active amendment is one we abstain on. Copilot serves a free `GET /amendments`
+  (full feature set joined to our committed vote list); dashboard renders the board. v1 is
+  self-contained (no external support-% / ETA). Evolves at the 3.2.0 port: regenerate the
+  vote list from `features.macro`, and expose the validator's *actual* live votes via the
+  FFI API as the truth-source. Design spec lives in the validator repo's
+  `docs/superpowers/specs/`.
+
 ## High value (recommended next)
 - **Trend memory.** The service keeps a rolling buffer of verdicts/signals so COP can
   answer "is divergence *growing*?" / "has lag been *climbing*?" — fixes the current
