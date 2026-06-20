@@ -198,10 +198,21 @@ export function assess(bundle) {
   if (hostMem) signals.host_memory = hostMem;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));
 
+  // FFI tier was EXPECTED (apiBase configured) but the validator API didn't answer:
+  // the validator we monitor is DOWN/halted. Must NOT masquerade as generic-HEALTHY.
+  const ffiExpectedDown = !!config.apiBase && !ffiAvailable;
+  if (ffiExpectedDown) {
+    signals.ffi_validator = {
+      status: 'degraded',
+      detail: `FFI validator API (${config.apiBase}) UNREACHABLE — validator process is DOWN or halted${errors.length ? ` · ${errors[0]}` : ''}`,
+      ffi_unreachable: true,
+    };
+  }
+
   const gating = Object.entries(signals).filter(([, x]) => !x.informational);
   const worst = gating.reduce((m, [, x]) => Math.max(m, sev(x.status)), 0);
   const anySync = gating.some(([, x]) => x.status === 'syncing');
-  const haltSuspected = !!signals.state_integrity?.halt_suspected;
+  const haltSuspected = !!signals.state_integrity?.halt_suspected || ffiExpectedDown;
   const blocked = !!signals.amendments?.blocked;
 
   let verdict;
@@ -227,6 +238,7 @@ export function assess(bundle) {
 }
 
 function oneLiner(verdict, s, triggers, ffi) {
+  if (s.ffi_validator?.ffi_unreachable) return s.ffi_validator.detail;
   if (verdict === 'HEALTHY') {
     if (ffi && s.state_integrity?.consecutive_matches != null) return `HEALTHY — ${s.state_integrity.consecutive_matches.toLocaleString()} consecutive state-hash matches, 0 mismatches, ${s.peers?.peers ?? '?'} peers, all signals green.`;
     return `HEALTHY — server_state=${s.server_state?.server_state}, last ledger ${s.ledger?.age ?? '?'}s ago, ${s.peers?.peers ?? '?'} peers, not amendment-blocked.`;
