@@ -86,5 +86,36 @@ export const config = {
     missRateWatch: 0.15,    // state.rocks miss rate (fallbacks / total db reads)
     missRateDegraded: 0.30,
     spinupGraceLedgers: 45, // ignore mismatch noise for N ledgers after a sync
+    // Peer count. This node accepts NO inbound peers — TCP 51235 is not
+    // forwarded on the router (verified 2026-07-31: 8 peers, inbound=0), so it
+    // is limited to outbound slots against saturated public hubs. 4-8 is its
+    // known steady state, and the old hardcoded `p >= 5 ? ok` flapped straight
+    // through it, firing WATCH 18 times in 7 days on a node that was `full`,
+    // in consensus, and closing ledgers at offset 0.
+    //
+    // Same reasoning as missRate above: gate at genuinely abnormal levels. The
+    // acute failure is starvation, not scarcity — 2026-07-31 saw 0 peers for
+    // two hours, which cascaded into an unfillable ws-sync gap and cost a
+    // validator wipe+resync (project_validator_peer_starvation_2026_07_31).
+    // Those thresholds still catch it loudly.
+    //
+    // THE REAL FIX is forwarding the peer port to the node's LAN address on the router; with
+    // inbound peers this node would hold 20-40 and never starve. Raise these
+    // back toward 10/5 once that is done.
+    peersWatch: 3,          // <= this many peers → WATCH
+    peersDegraded: 1,       // <= this many peers → DEGRADED
+  },
+
+  // Ledger-store volume + online_delete window, for the store_pruning signal.
+  // Sizing rule this guards (learned 2026-08-25): online_delete keeps TWO store
+  // generations resident (the archive is only removed at the NEXT rotation), so
+  // peak NuDB footprint is ~2x the window; SQLite transaction.db on the same
+  // volume prunes rows but never shrinks. Under 512 MB free, xrpld stops ITSELF
+  // cleanly ("Out of transaction DB space", exit 0) and Restart=on-failure
+  // will not bring it back. Watching free space is the fix.
+  store: {
+    mount: process.env.COPILOT_STORE_MOUNT || LOCAL.store?.mount || '/var/lib/xrpld',
+    // [node_db] online_delete from the node's config; null disables the width check.
+    onlineDeleteWindow: Number(process.env.COPILOT_ONLINE_DELETE_WINDOW || LOCAL.store?.onlineDeleteWindow) || null,
   },
 };

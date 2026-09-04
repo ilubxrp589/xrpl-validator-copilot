@@ -4,7 +4,7 @@
 // reachable from it) can restart, wipe, resync, sign, or mutate the node in any
 // way. That invariant is what makes the copilot safe to point at production.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, statfs } from 'node:fs/promises';
 import { cpus } from 'node:os';
 import { config } from './config.mjs';
 import { assess } from './assess.mjs';
@@ -143,7 +143,23 @@ async function hostStats() {
     if (total == null || avail == null) return { available: false, note: 'could not parse /proc/meminfo' };
     let load1 = null;
     try { load1 = Number((await readFile('/proc/loadavg', 'utf8')).split(' ')[0]); } catch { /* */ }
+    // Ledger-store disk (still read-only: statfs). The 2026-08-25 outage: two
+    // online_delete generations plus SQLite transaction.db outgrew the volume
+    // and xrpld stopped itself cleanly at <512 MB free — nothing was watching
+    // the disk. See config.store.
+    let disk = null;
+    try {
+      const s = await statfs(config.store.mount);
+      const totalB = s.blocks * s.bsize, freeB = s.bavail * s.bsize;
+      disk = {
+        mount: config.store.mount,
+        total_gb: +(totalB / 2 ** 30).toFixed(1),
+        free_gb: +(freeB / 2 ** 30).toFixed(1),
+        used_pct: +(100 * (1 - freeB / totalB)).toFixed(1),
+      };
+    } catch { /* disk metrics best-effort */ }
     return {
+      disk,
       available: true,
       total_gb: +total.toFixed(1), available_gb: +avail.toFixed(1), available_pct: +(100 * avail / total).toFixed(1),
       swap_used_gb: swapT != null && swapF != null ? +(swapT - swapF).toFixed(1) : null, swap_total_gb: swapT != null ? +swapT.toFixed(1) : null,

@@ -45,7 +45,9 @@ function genericSignals(r) {
   }
   s.history = completeLedgers(r.complete_ledgers);
   const p = r.peers ?? 0;
-  s.peers = { status: p >= 5 ? 'ok' : p >= 1 ? 'watch' : 'degraded', detail: `${p} peer(s)`, peers: p };
+  const pw = config.thresholds.peersWatch ?? 3;
+  const pd = config.thresholds.peersDegraded ?? 1;
+  s.peers = { status: p > pw ? 'ok' : p > pd ? 'watch' : 'degraded', detail: `${p} peer(s)`, peers: p };
   const lf = r.load_factor ?? 1;
   s.load = { status: lf <= 1 ? 'ok' : lf <= 10 ? 'watch' : 'degraded', detail: `load_factor=${lf}${lf > 1 ? ' (under load)' : ''}`, load_factor: lf };
   if (r.last_close) {
@@ -100,9 +102,22 @@ function ffiSignals(ffi, rippled) {
   }
   if (v) {
     const tot = (v.live_apply_diverged ?? 0) + (v.live_apply_silent_diverged ?? 0) + (v.live_apply_mutation_diverged ?? 0) + (v.shadow_hash_mismatched ?? 0);
+    // 2026-08-26: after the outage recovery, the shadow-apply feeder accrues a
+    // steady tefPAST_SEQ/terPRE_SEQ residue (same-account bursts applied out of
+    // canonical order) while state hashes stay perfect — a KNOWN benign class.
+    // Cumulative counters never reset without a validator restart, so gating on
+    // tot>0 would hold WATCH (and hourly pings) forever. Classify instead:
+    // seq-order-only residue = ok (counted in detail); ANY other divergence
+    // type, or any silent/mutation/shadow-hash hit, = watch.
+    const divTypes = Object.keys(v.live_diverged_by_type || {});
+    const seqOrderOnly = divTypes.length > 0 && divTypes.every((k) => /(tefPAST_SEQ|terPRE_SEQ)$/.test(k));
+    const serious = (v.live_apply_silent_diverged ?? 0) + (v.live_apply_mutation_diverged ?? 0) + (v.shadow_hash_mismatched ?? 0) > 0;
+    const unexplained = (v.live_apply_diverged ?? 0) > 0 && !seqOrderOnly;
     s.divergences = {
-      status: tot === 0 ? 'ok' : 'watch',
-      detail: tot === 0 ? 'no divergences (apply + shadow-hash clean since start)' : `cumulative divergences: ${tot} — use get_trend to see if still growing`,
+      status: tot === 0 ? 'ok' : (serious || unexplained) ? 'watch' : 'ok',
+      detail: tot === 0 ? 'no divergences (apply + shadow-hash clean since start)'
+        : (serious || unexplained) ? `cumulative divergences: ${tot} — includes types beyond the known seq-order class; use get_trend + get_engine_stats`
+        : `${tot} seq-order shadow-feeder divergences (known benign class: tefPAST_SEQ/terPRE_SEQ pairs, state hashes clean)`,
       live_apply_diverged: v.live_apply_diverged ?? 0, silent: v.live_apply_silent_diverged ?? 0, mutation: v.live_apply_mutation_diverged ?? 0, shadow_hash_mismatched: v.shadow_hash_mismatched ?? 0,
     };
     const hits = v.db_hits ?? 0, miss = v.db_rpc_fallbacks ?? 0, tr = hits + miss;
@@ -176,13 +191,55 @@ function validationSignal(snap, rippled, vals) {
 function hostMemorySignal(h) {
   if (!h?.available) return null;
   const pct = h.available_pct, gb = h.available_gb;
-  const status = (pct < 7 || gb < 1.5) ? 'degraded' : pct < 15 ? 'watch' : 'ok';
+  // Absolute floors, not percentages (same "gate at genuinely abnormal levels"
+  // reasoning as peers/missRate in config.mjs): a 33.5GB harness replay parks
+  // this 61GB box at 8-9GB available for an hour at a time, and the old pct<15
+  // gate (=9.2GB) flapped straight through that band — 9 alerts in 50 min on
+  // 2026-08-25. 3GB is below any healthy operating point here; 1.5GB is acute.
+  const status = gb < 1.5 ? 'degraded' : gb < 3 ? 'watch' : 'ok';
   const swap = h.swap_total_gb ? `, swap ${h.swap_used_gb}/${h.swap_total_gb}GB` : '';
   return {
     status,
     detail: `host memory ${gb}GB available (${pct}% of ${h.total_gb}GB)${swap}, load ${h.load1 ?? '?'}/${h.cores}c${status !== 'ok' ? ' — LOW: OOM/halt risk' : ''}`,
     available_pct: pct, available_gb: gb,
   };
+}
+
+// Ledger-store pruning health. 2026-08-25 outage: online_delete keeps two store
+// generations resident and SQLite transaction.db never shrinks, so the volume
+// filled between two ON-SCHEDULE rotations and xrpld stopped itself cleanly
+// ("Out of transaction DB space"). Free disk is therefore the primary tell; the
+// retained-range width vs the configured online_delete window is a secondary
+// check for a rotation that genuinely fails to run (healthWait gate in rippled's
+// SHAMapStoreImp). Both inputs come from config.store.
+function storePruningSignal(bundle) {
+  const disk = bundle.host?.disk;
+  const cl = bundle.rippled?.complete_ledgers;
+  let retained = null;
+  if (typeof cl === 'string' && /\d/.test(cl)) {
+    retained = cl.split(',').reduce((n, r) => {
+      const m = r.match(/(\d+)\s*-\s*(\d+)/);
+      return m ? n + (Number(m[2]) - Number(m[1]) + 1) : n;
+    }, 0);
+  }
+  if (retained == null && !disk) return null;
+  const win = config.store?.onlineDeleteWindow || null;
+  const widthWatch = win != null && retained != null && retained > win * 1.5;
+  const widthBad = win != null && retained != null && retained > win * 2;
+  // Disk % is the BACKSTOP only — the width check above fires first in every
+  // realistic stall (nothing else fills this disk). Calibrated 2026-08-26
+  // 01:15: the post-recovery plateau (old store awaiting cleanup + fresh
+  // store) sits at ~96% and is STABLE once backfill completes — that state
+  // must read ok, not page the operator hourly overnight.
+  const diskWatch = disk && disk.used_pct > 97;
+  const diskBad = disk && (disk.used_pct > 98.5 || disk.free_gb < 6);
+  const status = (widthBad || diskBad) ? 'degraded' : (widthWatch || diskWatch) ? 'watch' : 'ok';
+  const parts = [];
+  if (retained != null) parts.push(`retained ${retained.toLocaleString()} ledgers${win ? ` (window ${win.toLocaleString()})` : ''}`);
+  if (disk) parts.push(`${disk.mount} ${disk.used_pct}% used, ${disk.free_gb}GB free`);
+  if (widthWatch || widthBad) parts.push('online_delete rotation looks STALLED — prune before the disk fills');
+  else if (diskWatch || diskBad) parts.push('ledger-store disk pressure');
+  return { status, detail: `store pruning: ${parts.join('; ')}`, retained, disk };
 }
 
 /** @param bundle { rippled, amendments, host, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */
@@ -194,6 +251,8 @@ export function assess(bundle) {
   if (vList) signals.validator_list = vList;
   const vSig = validationSignal(bundle.validations, rippled, bundle.validators);
   if (vSig) signals.validation = vSig;
+  const pruning = storePruningSignal(bundle);
+  if (pruning) signals.store_pruning = pruning;
   const hostMem = hostMemorySignal(bundle.host);
   if (hostMem) signals.host_memory = hostMem;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));

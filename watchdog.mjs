@@ -39,7 +39,12 @@ export function conditions(a, trend) {
   // Predictive — trend-based; can fire even when the snapshot verdict still looks OK.
   // (Tier-aware: these fields are null on a stock node, so they simply don't fire.)
   if (trend && !trend.note) {
-    if (trend.new_divergences > 0) out.push({ key: 'divergence_growing', level: 'warning', title: '🟡 Divergence growing', detail: `+${trend.new_divergences} new in ${trend.span_minutes}m (${trend.divergences_per_min}/min) — investigate before it escalates` });
+    // 2026-08-26: defer to the snapshot signal's CLASSIFICATION. The known
+    // seq-order shadow-feeder residue (tefPAST_SEQ/terPRE_SEQ, state hashes
+    // clean) grows steadily and reads status 'ok' in assess.mjs — its growth
+    // must not page. Any unexplained divergence class flips that signal to
+    // 'watch', which re-arms this predictive alert automatically.
+    if (trend.new_divergences > 0 && a.signals?.divergences?.status !== 'ok') out.push({ key: 'divergence_growing', level: 'warning', title: '🟡 Divergence growing', detail: `+${trend.new_divergences} new in ${trend.span_minutes}m (${trend.divergences_per_min}/min) — investigate before it escalates` });
     if (trend.match_streak && trend.match_streak.stalled && v !== 'SYNCING') out.push({ key: 'streak_stalled', level: 'warning', title: '🟡 Match streak stalled', detail: `state-hash match streak not advancing over ${trend.span_minutes}m while not syncing` });
   }
   return out;
