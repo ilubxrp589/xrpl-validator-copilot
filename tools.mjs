@@ -155,6 +155,7 @@ async function hostStats() {
         mount: config.store.mount,
         total_gb: +(totalB / 2 ** 30).toFixed(1),
         free_gb: +(freeB / 2 ** 30).toFixed(1),
+        free_b: freeB,          // exact — lets the burn rate resolve in minutes, not hours
         used_pct: +(100 * (1 - freeB / totalB)).toFixed(1),
       };
     } catch { /* disk metrics best-effort */ }

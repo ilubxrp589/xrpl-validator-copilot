@@ -16,7 +16,8 @@
     "health": "node healthcheck.mjs",
     "health:json": "node healthcheck.mjs --json",
     "ask": "node cli.mjs",
-    "dry": "node cli.mjs --dry-run"
+    "dry": "node cli.mjs --dry-run",
+    "test:store": "node store-pruning.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0"

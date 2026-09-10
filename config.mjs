@@ -115,7 +115,22 @@ export const config = {
   // will not bring it back. Watching free space is the fix.
   store: {
     mount: process.env.COPILOT_STORE_MOUNT || LOCAL.store?.mount || '/var/lib/xrpld',
-    // [node_db] online_delete from the node's config; null disables the width check.
+    // [node_db] online_delete from the node's config; null disables the rotation projection.
     onlineDeleteWindow: Number(process.env.COPILOT_ONLINE_DELETE_WINDOW || LOCAL.store?.onlineDeleteWindow) || null,
+    // Cold-start fallbacks ONLY — used until trend.jsonl holds >= burnMinSpanHours
+    // of store samples, after which burn and ledger rates are MEASURED.
+    // 0.71 MB/ledger = NuDB 0.535 + transaction.db 0.172, measured byte-exact over
+    // 825 ledgers on a production 3.3.0 node (2026-09-10).
+    // ⚠ Do NOT derive this from a generation's LIFETIME average (that gave 0.985 and
+    // false-paged): NuDB's write rate is front-loaded — a fresh writable backend
+    // absorbs state-tree copies right after a rotation, then decays. The marginal
+    // rate mid-cycle is what projects the remaining cycle, and it is ~25% lower.
+    mbPerLedger: Number(LOCAL.store?.mbPerLedger) || 0.71,
+    ledgersPerDay: Number(LOCAL.store?.ledgersPerDay) || 22200,
+    // 1h is plenty now that samples carry exact bytes; it bounds how long a
+    // cold start can page on the estimate instead of the measurement.
+    burnMinSpanHours: Number(LOCAL.store?.burnMinSpanHours) || 1,
+    // WATCH when the projected margin to the next rotation drops below this fraction.
+    rotationMarginWatch: Number(LOCAL.store?.rotationMarginWatch) || 0.25,
   },
 };

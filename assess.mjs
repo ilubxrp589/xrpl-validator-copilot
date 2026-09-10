@@ -12,6 +12,8 @@
 // The overall verdict and every per-signal status are computed HERE, in code,
 // from the raw numbers — the LLM reports them, it does not invent or soften them.
 
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { config } from './config.mjs';
 
 const T = config.thresholds;
@@ -205,41 +207,127 @@ function hostMemorySignal(h) {
   };
 }
 
-// Ledger-store pruning health. 2026-08-25 outage: online_delete keeps two store
-// generations resident and SQLite transaction.db never shrinks, so the volume
-// filled between two ON-SCHEDULE rotations and xrpld stopped itself cleanly
-// ("Out of transaction DB space"). Free disk is therefore the primary tell; the
-// retained-range width vs the configured online_delete window is a secondary
-// check for a rotation that genuinely fails to run (healthWait gate in rippled's
-// SHAMapStoreImp). Both inputs come from config.store.
-function storePruningSignal(bundle) {
+// Ledger-store pruning health.
+//
+// 2026-08-25 outage: online_delete keeps two store generations resident and
+// SQLite transaction.db never shrinks, so the volume filled BETWEEN two
+// ON-SCHEDULE rotations and xrpld stopped itself cleanly ("Out of transaction
+// DB space", exit 0 — Restart=on-failure ignores a clean exit, so it stays down).
+//
+// CORRECTED 2026-09-10 — the old `retained > 1.5x window => STALLED` test was
+// wrong. With two generations resident, retained legitimately sweeps 1x -> 2x the
+// window on EVERY cycle (the first rotation of a fresh store frees nothing: there
+// is no prior archive yet), so that test fires through the back half of every
+// cycle on a perfectly healthy node, and calls it "STALLED" when nothing is.
+// Verified on a production node: state.db LastRotatedLedger=106,770,647, rotation ran ON TIME
+// 09-05 00:40, yet retained=333,243 tripped the 1.5x line and paged the operator.
+//
+// What actually kills the node is a RACE: does the volume fill before the next
+// rotation drops the archive generation? Both sides come from complete_ledgers:
+//     lastRotated  = retainedFloor + window        (exact — matches state.db)
+//     nextRotation = retainedFloor + 2 * window
+// so we project days-to-full against days-to-rotation and alert on the MARGIN.
+// Rates are MEASURED from trend.jsonl because the burn rate changes regime: while
+// transaction.db still climbs to its high-water it adds ~0.27 MB/ledger on top of
+// NuDB's ~0.71, then plateaus after the first prune. Config values are cold-start
+// fallbacks only.
+// Resolved per call, not at import time, so tests can point it at a fixture.
+const trendFile = () => (process.env.COPILOT_TREND_FILE
+  ? pathToFileURL(process.env.COPILOT_TREND_FILE)
+  : new URL('./trend.jsonl', import.meta.url));
+
+/** Free space of a trend sample, in GiB — exact bytes when the sample carries them. */
+const freeGib = (r) => (r.store_free_b != null ? r.store_free_b / 2 ** 30 : r.store_free_gb);
+
+/** Measure store burn (GiB/day) and ledger rate/day from recorded trend samples. */
+function measureStoreBurn() {
+  let recs;
+  try {
+    recs = readFileSync(trendFile(), 'utf8').trimEnd().split('\n').slice(-4000)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((r) => r && r.ts && (r.store_free_b != null || r.store_free_gb != null));
+  } catch { return null; }
+  if (recs.length < 2) return null;
+  const last = recs[recs.length - 1];
+  const minSpanMs = (config.store?.burnMinSpanHours || 4) * 3_600_000;
+  const first = recs.find((r) => last.ts - r.ts >= minSpanMs);   // oldest sample still giving the min span
+  if (!first) return null;
+  const days = (last.ts - first.ts) / 86_400_000;
+  if (days <= 0) return null;
+  const ledgers = first.store_top != null && last.store_top != null
+    ? (last.store_top - first.store_top) / days : null;
+  return {
+    burn_gib_day: +((freeGib(first) - freeGib(last)) / days).toFixed(2),
+    ledgers_per_day: ledgers != null && ledgers > 0 ? Math.round(ledgers) : null,
+    span_hours: +((last.ts - first.ts) / 3_600_000).toFixed(1),
+  };
+}
+
+export function storePruningSignal(bundle) {
   const disk = bundle.host?.disk;
   const cl = bundle.rippled?.complete_ledgers;
-  let retained = null;
+  let retained = null, floor = null, top = null;
   if (typeof cl === 'string' && /\d/.test(cl)) {
-    retained = cl.split(',').reduce((n, r) => {
-      const m = r.match(/(\d+)\s*-\s*(\d+)/);
-      return m ? n + (Number(m[2]) - Number(m[1]) + 1) : n;
-    }, 0);
+    const rs = cl.split(',').map((r) => r.match(/(\d+)\s*-\s*(\d+)/)).filter(Boolean)
+      .map((m) => [Number(m[1]), Number(m[2])]);
+    if (rs.length) {
+      floor = Math.min(...rs.map((r) => r[0]));
+      top = Math.max(...rs.map((r) => r[1]));
+      retained = rs.reduce((n, r) => n + (r[1] - r[0] + 1), 0);
+    }
   }
   if (retained == null && !disk) return null;
   const win = config.store?.onlineDeleteWindow || null;
-  const widthWatch = win != null && retained != null && retained > win * 1.5;
-  const widthBad = win != null && retained != null && retained > win * 2;
-  // Disk % is the BACKSTOP only — the width check above fires first in every
-  // realistic stall (nothing else fills this disk). Calibrated 2026-08-26
-  // 01:15: the post-recovery plateau (old store awaiting cleanup + fresh
-  // store) sits at ~96% and is STABLE once backfill completes — that state
-  // must read ok, not page the operator hourly overnight.
+
+  const m = measureStoreBurn();
+  const rate = m?.ledgers_per_day || config.store?.ledgersPerDay || 22200;
+  const measured = !!(m && m.burn_gib_day > 0);   // negative right after a rotation => fall back
+  const burnGibDay = measured
+    ? m.burn_gib_day
+    : ((config.store?.mbPerLedger || 0.985) * rate) / 1073.74;   // MB/day -> GiB/day
+
+  // rippled stops ITSELF under 512 MB free, so that — not zero — is the floor.
+  const daysToFull = disk && burnGibDay > 0 ? (disk.free_gb - 0.5) / burnGibDay : null;
+  const nextRotation = win != null && floor != null ? floor + 2 * win : null;
+  const daysToRotation = nextRotation != null && top != null && rate > 0
+    ? (nextRotation - top) / rate : null;
+
+  const race = daysToFull != null && daysToRotation != null && daysToRotation > 0;
+  const margin = config.store?.rotationMarginWatch ?? 0.25;
+  const raceBad = race && daysToFull < daysToRotation;                 // will NOT reach the rotation
+  const raceWatch = race && daysToFull < daysToRotation * (1 + margin);
+
+  // A rotation that GENUINELY fails to run overshoots the structural 2x ceiling.
+  const stalled = win != null && retained != null && retained > win * 2.15;
+
+  // Absolute backstops, independent of the projection.
   const diskWatch = disk && disk.used_pct > 97;
   const diskBad = disk && (disk.used_pct > 98.5 || disk.free_gb < 6);
-  const status = (widthBad || diskBad) ? 'degraded' : (widthWatch || diskWatch) ? 'watch' : 'ok';
+
+  const status = (raceBad || stalled || diskBad) ? 'degraded'
+    : (raceWatch || diskWatch) ? 'watch' : 'ok';
+
   const parts = [];
-  if (retained != null) parts.push(`retained ${retained.toLocaleString()} ledgers${win ? ` (window ${win.toLocaleString()})` : ''}`);
+  if (retained != null) parts.push(`retained ${retained.toLocaleString()} ledgers${win ? ` (window ${win.toLocaleString()}; 1x-2x is NORMAL, two generations)` : ''}`);
   if (disk) parts.push(`${disk.mount} ${disk.used_pct}% used, ${disk.free_gb}GB free`);
-  if (widthWatch || widthBad) parts.push('online_delete rotation looks STALLED — prune before the disk fills');
+  if (race) parts.push(`burn ${burnGibDay.toFixed(1)}GB/day (${measured ? `measured over ${m.span_hours}h` : 'estimated'}) => full in ~${daysToFull.toFixed(1)}d vs rotation ${nextRotation.toLocaleString()} in ~${daysToRotation.toFixed(1)}d`);
+  if (stalled) parts.push('retained past the 2x ceiling — rotation GENUINELY stalled');
+  else if (raceBad) parts.push('WILL NOT reach the next rotation — free space or cut online_delete NOW');
+  else if (raceWatch) parts.push(`margin to next rotation under ${Math.round(margin * 100)}%`);
   else if (diskWatch || diskBad) parts.push('ledger-store disk pressure');
-  return { status, detail: `store pruning: ${parts.join('; ')}`, retained, disk };
+
+  return {
+    status,
+    detail: `store pruning: ${parts.join('; ')}`,
+    retained,
+    disk,
+    top,
+    next_rotation: nextRotation,
+    days_to_rotation: daysToRotation != null ? +daysToRotation.toFixed(2) : null,
+    days_to_full: daysToFull != null ? +daysToFull.toFixed(2) : null,
+    burn_gib_day: +burnGibDay.toFixed(2),
+    burn_measured: measured,
+  };
 }
 
 /** @param bundle { rippled, amendments, host, ffi:{engine,stateHash,consensus,peers}|null, ffiAvailable, errors } */

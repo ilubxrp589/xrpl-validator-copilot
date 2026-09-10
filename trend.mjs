@@ -56,6 +56,9 @@ export async function sample() {
     age: s.ledger?.age ?? null,                           // generic — ledger currency
     peers: s.peers?.peers ?? null,                        // generic
     host_avail: s.host_memory?.available_pct ?? null,     // generic — host mem % (OOM watch)
+    store_free_gb: s.store_pruning?.disk?.free_gb ?? null, // ledger-store volume, GiB free
+    store_free_b: s.store_pruning?.disk?.free_b ?? null,   // exact bytes — preferred for the burn rate
+    store_top: s.store_pruning?.top ?? null,               // highest retained seq — gives ledgers/day
     ram,
   };
   ring.push(rec);
