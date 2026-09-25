@@ -87,7 +87,10 @@ function ffiSignals(ffi, rippled) {
     else s.state_integrity = { status: 'ok', detail: `${cm.toLocaleString()} consecutive state-hash matches, 0 mismatches, ready_to_sign`, consecutive_matches: cm, total_mismatches: mm };
 
     if (syncing) s.sync = { status: 'syncing', detail: `bulk_sync: ${bulk.objects_synced ?? 0} objs @ ${Math.round(bulk.rate ?? 0)}/s`, ...bulk };
-    else if (bulk.verified === false) s.sync = { status: 'watch', detail: 'last bulk_sync did NOT verify' };
+    // A bulk sync that never ran (a warm restart resumes from the stored state, verified against the
+    // network's account hash) reports the defaults, verified=false: that is not a failed sync.
+    else if (bulk.verified === false && (bulk.objects_synced ?? 0) > 0) s.sync = { status: 'watch', detail: 'last bulk_sync did NOT verify' };
+    else if (bulk.verified === false) s.sync = { status: 'ok', detail: 'no bulk sync this start (warm restart); the state-hash matches judge the state' };
     else s.sync = { status: 'ok', detail: 'steady state (last sync verified)' };
   }
 
