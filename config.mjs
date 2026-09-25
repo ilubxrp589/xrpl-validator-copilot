@@ -127,6 +127,11 @@ export const config = {
     // rate mid-cycle is what projects the remaining cycle, and it is ~25% lower.
     mbPerLedger: Number(LOCAL.store?.mbPerLedger) || 0.71,
     ledgersPerDay: Number(LOCAL.store?.ledgersPerDay) || 22200,
+    // xrpld's state.db (`<database_path>/state.db`): LastRotatedLedger is the authoritative rotation point
+    // (2026-09-24 — the complete_ledgers inference was one window late after a restart). Unset = infer.
+    stateDb: process.env.COPILOT_STATE_DB || LOCAL.store?.stateDb || null,
+    // A rotation still unfinished this many ledgers past its point pages (it normally takes hours).
+    rotationOverdueLedgers: Number(LOCAL.store?.rotationOverdueLedgers) || 30000,
     // 1h is plenty now that samples carry exact bytes; it bounds how long a
     // cold start can page on the estimate instead of the measurement.
     burnMinSpanHours: Number(LOCAL.store?.burnMinSpanHours) || 1,

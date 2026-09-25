@@ -288,9 +288,21 @@ export function storePruningSignal(bundle) {
 
   // rippled stops ITSELF under 512 MB free, so that — not zero — is the floor.
   const daysToFull = disk && burnGibDay > 0 ? (disk.free_gb - 0.5) / burnGibDay : null;
-  const nextRotation = win != null && floor != null ? floor + 2 * win : null;
+  // The rotation point comes from xrpld's own state.db (`host.disk.last_rotated`, LastRotatedLedger) when the
+  // collector could read it. The complete_ledgers FLOOR is only lastRotated − window on a node that has not
+  // restarted since its last rotation: after the 2026-09-17 upgrade restart it equalled lastRotated itself, and
+  // `floor + 2*window` put every projection one window (~10 d) late — 123 false "WILL NOT reach" pages in 7 days.
+  const fromStateDb = Number.isFinite(disk?.last_rotated);
+  const lastRotated = fromStateDb ? disk.last_rotated : (win != null && floor != null ? floor + win : null);
+  const nextRotation = win != null && lastRotated != null ? lastRotated + win : null;
   const daysToRotation = nextRotation != null && top != null && rate > 0
     ? (nextRotation - top) / rate : null;
+  // Past its point the rotation is RUNNING: SHAMapStore clears SQLite in batches (healthWait between them),
+  // copies the state tree, then drops the archive generation — the 2026-09-15 rotation took hours. Only one
+  // still unfinished well past its point is a problem.
+  const overdue = nextRotation != null && top != null ? top - nextRotation : null;
+  const rotating = overdue != null && overdue >= 0;
+  const rotationStuck = rotating && overdue > (config.store?.rotationOverdueLedgers ?? 30_000);   // ~1.3 d
 
   const race = daysToFull != null && daysToRotation != null && daysToRotation > 0;
   const margin = config.store?.rotationMarginWatch ?? 0.25;
@@ -304,13 +316,15 @@ export function storePruningSignal(bundle) {
   const diskWatch = disk && disk.used_pct > 97;
   const diskBad = disk && (disk.used_pct > 98.5 || disk.free_gb < 6);
 
-  const status = (raceBad || stalled || diskBad) ? 'degraded'
+  const status = (raceBad || stalled || rotationStuck || diskBad) ? 'degraded'
     : (raceWatch || diskWatch) ? 'watch' : 'ok';
 
   const parts = [];
   if (retained != null) parts.push(`retained ${retained.toLocaleString()} ledgers${win ? ` (window ${win.toLocaleString()}; 1x-2x is NORMAL, two generations)` : ''}`);
   if (disk) parts.push(`${disk.mount} ${disk.used_pct}% used, ${disk.free_gb}GB free`);
-  if (race) parts.push(`burn ${burnGibDay.toFixed(1)}GB/day (${measured ? `measured over ${m.span_hours}h` : 'estimated'}) => full in ~${daysToFull.toFixed(1)}d vs rotation ${nextRotation.toLocaleString()} in ~${daysToRotation.toFixed(1)}d`);
+  if (race) parts.push(`burn ${burnGibDay.toFixed(1)}GB/day (${measured ? `measured over ${m.span_hours}h` : 'estimated'}) => full in ~${daysToFull.toFixed(1)}d vs rotation ${nextRotation.toLocaleString()} in ~${daysToRotation.toFixed(1)}d${fromStateDb ? '' : ' (rotation point inferred — state.db unread)'}`);
+  if (rotationStuck) parts.push(`rotation due at ${nextRotation.toLocaleString()} is OVERDUE by ${overdue.toLocaleString()} ledgers (~${(overdue / rate).toFixed(1)}d) — check xrpld SHAMapStore (healthWait)`);
+  else if (rotating) parts.push(`rotation due at ${nextRotation.toLocaleString()} is in progress (${overdue.toLocaleString()} ledgers past; the archive generation is dropped when it finishes)`);
   if (stalled) parts.push('retained past the 2x ceiling — rotation GENUINELY stalled');
   else if (raceBad) parts.push('WILL NOT reach the next rotation — free space or cut online_delete NOW');
   else if (raceWatch) parts.push(`margin to next rotation under ${Math.round(margin * 100)}%`);
@@ -323,6 +337,9 @@ export function storePruningSignal(bundle) {
     disk,
     top,
     next_rotation: nextRotation,
+    last_rotated: lastRotated,
+    rotation_source: fromStateDb ? 'state.db' : 'inferred',
+    rotation_overdue: rotating ? overdue : null,
     days_to_rotation: daysToRotation != null ? +daysToRotation.toFixed(2) : null,
     days_to_full: daysToFull != null ? +daysToFull.toFixed(2) : null,
     burn_gib_day: +burnGibDay.toFixed(2),

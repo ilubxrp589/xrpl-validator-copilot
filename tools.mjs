@@ -5,6 +5,8 @@
 // way. That invariant is what makes the copilot safe to point at production.
 
 import { readFile, statfs } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { cpus } from 'node:os';
 import { config } from './config.mjs';
 import { assess } from './assess.mjs';
@@ -158,6 +160,16 @@ async function hostStats() {
         free_b: freeB,          // exact — lets the burn rate resolve in minutes, not hours
         used_pct: +(100 * (1 - freeB / totalB)).toFixed(1),
       };
+      // The rotation point straight from xrpld's own state.db (12 KB, world-readable; opened read-only).
+      // storePruningSignal projects the next rotation from it — the complete_ledgers inference was one
+      // window late after the 2026-09-17 restart (see assess.mjs).
+      if (config.store.stateDb) {
+        try {
+          const { stdout } = await promisify(execFile)('sqlite3', ['-readonly', config.store.stateDb, 'select LastRotatedLedger from DbState;'], { timeout: 3000 });
+          const n = Number(stdout.trim());
+          if (Number.isFinite(n) && n > 0) disk.last_rotated = n;
+        } catch { /* best-effort: the projection falls back to the inference */ }
+      }
     } catch { /* disk metrics best-effort */ }
     return {
       disk,

@@ -57,6 +57,36 @@ const test = (n, f) => cases.push([n, f]);
 
 // --- what must stay SILENT -------------------------------------------------
 
+// 2026-09-24: the fourth wrong call. After the 2026-09-17 upgrade restart the complete_ledgers FLOOR equals
+// LastRotatedLedger itself (not lastRotated − window), so `floor + 2*window` put the next rotation one window
+// (~10 days) late and paged 123 times in 7 days: "WILL NOT reach the next rotation". state.db said the rotation
+// was due at 107,214,647 — and xrpld's SHAMapStore was already running it. state.db is authoritative.
+const SEP24 = (top, last_rotated) => ({
+  rippled: { complete_ledgers: `106992647-${top}` },
+  host: { disk: { mount: '/mnt/xrpl-data', free_gb: 63.1, free_b: Math.round(63.1 * 2 ** 30), used_pct: 86.5, last_rotated } },
+});
+
+test('state.db LastRotatedLedger wins: the 2026-09-24 state is a rotation IN PROGRESS, not a race', () => {
+  const s = withTrend(fixture(13.3, 63.1, 24), () => storePruningSignal(SEP24(107_215_084, 106_992_647)));
+  assert.equal(s.next_rotation, 107_214_647);
+  assert.notEqual(s.status, 'degraded', s.detail);
+  assert.match(s.detail, /in progress/);
+});
+
+test('a rotation still unfinished well past its point IS degraded', () => {
+  const s = withTrend(fixture(13.3, 63.1, 24), () => storePruningSignal(SEP24(107_214_647 + 40_000, 106_992_647)));
+  assert.equal(s.status, 'degraded', s.detail);
+  assert.match(s.detail, /OVERDUE/);
+});
+
+test('after the rotation state.db moves on and the projection resumes from it', () => {
+  // state.db LastRotatedLedger = 107,214,647 → next = 107,436,647; ~9.9 d away with ~205 GiB free: fine.
+  const b = SEP24(107_216_000, 107_214_647); b.host.disk.free_gb = 205; b.host.disk.free_b = 205 * 2 ** 30; b.host.disk.used_pct = 56;
+  const s = withTrend(fixture(13.3, 205, 24), () => storePruningSignal(b));
+  assert.equal(s.next_rotation, 107_436_647);
+  assert.equal(s.status, 'ok', s.detail);
+});
+
 test('the real 2026-09-09 state is OK — it was never going to miss the rotation', () => {
   // free 94.8 GiB, 110,722 ledgers to rotation. At the measured 0.71 MB/ledger
   // that is ~6.4d of runway against a ~5.0d rotation: ~29% margin. The 0.985
