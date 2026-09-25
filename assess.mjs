@@ -137,6 +137,9 @@ function ffiSignals(ffi, rippled) {
 // Amendment health: reactive (amendment_blocked) + predictive (unsupported amendments
 // from the `feature` pipeline). Active-unsupported = blocked now; approaching/future =
 // upgrade-before-it-bites warnings.
+// An amendment the server knows by hash only (a newer release's) has no name: identify it by the hash.
+const amendmentLabel = (a) => a.name || `${(a.hash || '?').slice(0, 16)}… (no name on this server)`;
+
 function amendmentSignal(r, am) {
   if (r?.amendment_blocked) return { status: 'degraded', detail: 'AMENDMENT-BLOCKED — out of consensus until upgraded', blocked: true };
   if (am?.available) {
@@ -144,9 +147,9 @@ function amendmentSignal(r, am) {
     const active = unsup.filter((a) => a.enabled);
     const approaching = unsup.filter((a) => !a.enabled && a.majority);
     const future = unsup.filter((a) => !a.enabled && !a.majority);
-    if (active.length) return { status: 'degraded', detail: `does NOT support ${active.length} ACTIVE amendment(s): ${active.map((a) => a.name).join(', ')} — upgrade now`, blocked: true };
-    if (approaching.length) return { status: 'watch', detail: `amendment(s) with majority this node does NOT support: ${approaching.map((a) => a.name).join(', ')} — activates ~2 weeks after majority; upgrade before then or be blocked` };
-    if (future.length) return { status: 'watch', detail: `does not yet support ${future.length} amendment(s): ${future.map((a) => a.name).join(', ')} — no majority yet; upgrade to stay safe` };
+    if (active.length) return { status: 'degraded', detail: `does NOT support ${active.length} ACTIVE amendment(s): ${active.map(amendmentLabel).join(', ')} — upgrade now`, blocked: true };
+    if (approaching.length) return { status: 'watch', detail: `amendment(s) with majority this node does NOT support: ${approaching.map(amendmentLabel).join(', ')} — activates ~2 weeks after majority; upgrade before then or be blocked` };
+    if (future.length) return { status: 'watch', detail: `does not yet support ${future.length} amendment(s): ${future.map(amendmentLabel).join(', ')} — no majority yet; upgrade to stay safe` };
     return { status: 'ok', detail: `not amendment-blocked; supports all ${am.total} known amendments` };
   }
   return { status: 'ok', detail: 'not amendment-blocked' };

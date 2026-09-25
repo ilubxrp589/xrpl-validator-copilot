@@ -75,8 +75,9 @@ async function getAmendments() {
     if (!r || r.error || !r.features) {
       data = { available: false, note: r?.error ? `feature: ${r.error} (admin RPC required)` : 'no amendment data' };
     } else {
-      const all = Object.values(r.features);
-      const unsupported = all.filter((a) => a.supported === false).map((a) => ({ name: a.name, enabled: !!a.enabled, majority: a.majority ?? null }));
+      // Keep the hash: xrpld names only the amendments it knows, so an unknown one is identified by it.
+      const all = Object.entries(r.features).map(([hash, a]) => ({ hash, ...a }));
+      const unsupported = all.filter((a) => a.supported === false).map((a) => ({ hash: a.hash, name: a.name, enabled: !!a.enabled, majority: a.majority ?? null }));
       data = { available: true, total: all.length, enabled: all.filter((a) => a.enabled).length, supports_all: unsupported.length === 0, unsupported };
     }
   } catch (e) { data = { available: false, note: String(e?.message || e) }; }
