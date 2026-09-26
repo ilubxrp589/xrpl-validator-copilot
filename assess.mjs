@@ -245,7 +245,21 @@ const trendFile = () => (process.env.COPILOT_TREND_FILE
 /** Free space of a trend sample, in GiB — exact bytes when the sample carries them. */
 const freeGib = (r) => (r.store_free_b != null ? r.store_free_b / 2 ** 30 : r.store_free_gb);
 
-/** Measure store burn (GiB/day) and ledger rate/day from recorded trend samples. */
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * Measure store burn (GiB/day) and ledger rate/day from recorded trend samples.
+ *
+ * The burn is the TYPICAL hour's, not the slope across the buffer: the buffer is cut into hours and the
+ * median hour sets the rate. A one-off burst — the writes that follow a rotation, xrpld re-acquiring state
+ * after a restart — fills a few hours, and end to end it set the rate for a whole day (2026-09-26: 19.6
+ * GB/day read against 11.6 to 13.2 actual; see store-pruning.test.mjs). A burn that stays high fills most
+ * hours and still sets it. Samples farther apart than an hour are one interval, so two samples still give
+ * the plain slope between them.
+ */
 function measureStoreBurn() {
   let recs;
   try {
@@ -260,10 +274,14 @@ function measureStoreBurn() {
   if (!first) return null;
   const days = (last.ts - first.ts) / 86_400_000;
   if (days <= 0) return null;
+  // one checkpoint per hour (the first sample at least an hour after the previous checkpoint)
+  const marks = [first];
+  for (const r of recs) if (r.ts >= marks[marks.length - 1].ts + 3_600_000) marks.push(r);
+  const rates = marks.slice(1).map((b, i) => (freeGib(marks[i]) - freeGib(b)) / ((b.ts - marks[i].ts) / 86_400_000));
   const ledgers = first.store_top != null && last.store_top != null
     ? (last.store_top - first.store_top) / days : null;
   return {
-    burn_gib_day: +((freeGib(first) - freeGib(last)) / days).toFixed(2),
+    burn_gib_day: +(rates.length ? median(rates) : (freeGib(first) - freeGib(last)) / days).toFixed(2),
     ledgers_per_day: ledgers != null && ledgers > 0 ? Math.round(ledgers) : null,
     span_hours: +((last.ts - first.ts) / 3_600_000).toFixed(1),
   };
@@ -328,7 +346,7 @@ export function storePruningSignal(bundle) {
   const parts = [];
   if (retained != null) parts.push(`retained ${retained.toLocaleString()} ledgers${win ? ` (window ${win.toLocaleString()}; 1x-2x is NORMAL, two generations)` : ''}`);
   if (disk) parts.push(`${disk.mount} ${disk.used_pct}% used, ${disk.free_gb}GB free`);
-  if (race) parts.push(`burn ${burnGibDay.toFixed(1)}GB/day (${measured ? `measured over ${m.span_hours}h` : 'estimated'}) => full in ~${daysToFull.toFixed(1)}d vs rotation ${nextRotation.toLocaleString()} in ~${daysToRotation.toFixed(1)}d${fromStateDb ? '' : ' (rotation point inferred — state.db unread)'}`);
+  if (race) parts.push(`burn ${burnGibDay.toFixed(1)}GB/day (${measured ? `typical hour of the last ${m.span_hours}h` : 'estimated'}) => full in ~${daysToFull.toFixed(1)}d vs rotation ${nextRotation.toLocaleString()} in ~${daysToRotation.toFixed(1)}d${fromStateDb ? '' : ' (rotation point inferred — state.db unread)'}`);
   if (rotationStuck) parts.push(`rotation due at ${nextRotation.toLocaleString()} is OVERDUE by ${overdue.toLocaleString()} ledgers (~${(overdue / rate).toFixed(1)}d) — check xrpld SHAMapStore (healthWait)`);
   else if (rotating) parts.push(`rotation due at ${nextRotation.toLocaleString()} is in progress (${overdue.toLocaleString()} ledgers past; the archive generation is dropped when it finishes)`);
   if (stalled) parts.push('retained past the 2x ceiling — rotation GENUINELY stalled');

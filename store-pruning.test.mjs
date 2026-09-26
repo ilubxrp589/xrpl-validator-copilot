@@ -138,6 +138,46 @@ test('disk backstops still fire independently of the projection', () => {
   assert.equal(s.status, 'degraded');
 });
 
+// --- one-off write bursts --------------------------------------------------
+
+// 2026-09-26: the fifth wrong call. The rate was the slope across the whole ~24 h buffer, which still held
+// the writes that followed the 2026-09-25 rotation and xrpld upgrade (-8.7 GiB in six hours, against 2.9 to
+// 4.1 GiB in each later six). It read 19.6 GB/day for a day — a DEGRADED "WILL NOT reach the next rotation"
+// at 02:59, then a WATCH "full ~8.8d vs rotation ~8.5d" — while the node was burning 11.6 to 13.2 GB/day.
+// The typical hour now sets the rate.
+
+/** One sample per hour over `hours`, burning gibInHour(h) in hour h (0 = oldest), ending at `freeNow`. */
+function hourly(gibInHour, freeNow, hours = 24) {
+  const f = join(mkdtempSync(join(tmpdir(), 'cop-trend-')), 'trend.jsonl');
+  const now = Date.now(), rows = [];
+  let free = freeNow;
+  for (let h = hours; h >= 0; h--) {
+    rows.unshift({ ts: now - (hours - h) * 3_600_000, store_free_b: Math.round(free * 2 ** 30), store_top: 107_248_661 - (hours - h) * 925 });
+    if (h > 0) free += gibInHour(h - 1);
+  }
+  writeFileSync(f, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return f;
+}
+// The reference node on 2026-09-26 08:51: 173.7 GiB free, next rotation 107,436,647 (state.db), ~8.5 d away.
+const SEP26 = {
+  rippled: { complete_ledgers: '106992943-107248661' },
+  host: { disk: { mount: '/mnt/xrpl-data', free_gb: 173.7, free_b: Math.round(173.7 * 2 ** 30), used_pct: 62.9, last_rotated: 107_214_647 } },
+};
+
+test('a one-off write burst does not set the rate: the 2026-09-26 state is OK', () => {
+  // six hours at 1.45 GiB/h (the burst), then 0.55 GiB/h: 18.6 GiB/day end to end, 13.2 in the typical hour
+  const s = withTrend(hourly((h) => (h < 6 ? 1.45 : 0.55), 173.7), () => storePruningSignal(SEP26));
+  assert.equal(s.next_rotation, 107_436_647);
+  assert.ok(Math.abs(s.burn_gib_day - 13.2) < 0.1, `expected ~13.2 GiB/day, got ${s.burn_gib_day}`);
+  assert.equal(s.status, 'ok', s.detail);
+});
+
+test('a burn that stays high still sets the rate and fires', () => {
+  const s = withTrend(hourly(() => 0.775, 173.7), () => storePruningSignal(SEP26));
+  assert.ok(Math.abs(s.burn_gib_day - 18.6) < 0.1, `expected ~18.6 GiB/day, got ${s.burn_gib_day}`);
+  assert.equal(s.status, 'watch', s.detail);
+});
+
 // --- measurement mechanics -------------------------------------------------
 
 test('burn is measured from EXACT bytes, not the rounded GiB field', () => {
