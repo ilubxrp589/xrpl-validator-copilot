@@ -9,9 +9,31 @@
 
 import { config } from './config.mjs';
 import { recordIncident, countOfKind } from './incidents.mjs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const A = config.alerts;
-const state = new Map(); // key -> { count, alerted, lastAlertAt, level }
+const state = new Map(); // key -> { count, alerted, lastAlertAt, level, mutedRecorded }
+
+// Mute switch (2026-09-11): a `MUTE` file beside config.local.json silences pages
+// and recovery notes while it exists — incidents are still recorded, conditions
+// still tracked, so the first tick after unmute pages anything still present.
+// Empty file (or "on") = muted until removed; otherwise its first line is an
+// expiry: epoch seconds or an ISO datetime. Toggle with ./mute.sh on|off|<min>.
+// Meant for rapid deploy cycles, where every relaunch reads DEGRADED for a while.
+const MUTE_FILE = new URL('./MUTE', import.meta.url);
+let muteLogged = null;
+function muteState() {
+  if (!existsSync(MUTE_FILE)) { if (muteLogged !== false) { muteLogged = false; console.log('[watchdog] alerts LIVE'); } return { muted: false }; }
+  let until = null;
+  try {
+    const raw = readFileSync(MUTE_FILE, 'utf8').split('\n')[0].trim();
+    if (raw && raw !== 'on') { const n = Number(raw); until = Number.isFinite(n) ? (n < 1e12 ? n * 1000 : n) : Date.parse(raw); }
+  } catch { /* unreadable → treat as muted */ }
+  const muted = until == null || Number.isNaN(until) || Date.now() < until;
+  if (muted && muteLogged !== true) { muteLogged = true; console.log(`[watchdog] alerts MUTED${until ? ` until ${new Date(until).toISOString()}` : ' until MUTE is removed'}`); }
+  if (!muted && muteLogged !== false) { muteLogged = false; console.log('[watchdog] alerts LIVE (mute expired)'); }
+  return { muted, until };
+}
 
 const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
@@ -53,6 +75,7 @@ export function conditions(a, trend) {
 /** Called on every sample. Diffs conditions vs prior state and fires alerts. */
 export async function tick(a) {
   if (!A.channel) return; // alerts disabled
+  const { muted } = muteState();
   let trend = null;
   try { const { getTrend } = await import('./trend.mjs'); trend = getTrend(30); } catch { /* ignore */ }
   const current = conditions(a, trend);
@@ -61,22 +84,28 @@ export async function tick(a) {
 
   // rising edges (debounce: must persist ≥2 ticks; cooldown between repeats)
   for (const c of current) {
-    const st = state.get(c.key) || { count: 0, alerted: false, lastAlertAt: 0, level: c.level };
+    const st = state.get(c.key) || { count: 0, alerted: false, lastAlertAt: 0, level: c.level, mutedRecorded: false };
     st.count += 1; st.level = c.level;
     const cooled = now - st.lastAlertAt > A.cooldownMin * 60_000;
     if (st.count >= 2 && (!st.alerted || cooled)) {
-      recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: c.detail });
-      const n = countOfKind(c.key);
-      const ctx = n > 1 ? ` (${ordinal(n)} in 7d)` : '';
-      await send(`${c.title}${ctx}\n${c.detail}`);
-      st.alerted = true; st.lastAlertAt = now;
+      if (muted) {
+        // record the incident once per rising edge; no page, and `alerted`
+        // stays false so the first live tick pages it if it is still there
+        if (!st.mutedRecorded) { recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: `${c.detail} [muted]` }); st.mutedRecorded = true; }
+      } else {
+        recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: c.detail });
+        const n = countOfKind(c.key);
+        const ctx = n > 1 ? ` (${ordinal(n)} in 7d)` : '';
+        await send(`${c.title}${ctx}\n${c.detail}`);
+        st.alerted = true; st.lastAlertAt = now;
+      }
     }
     state.set(c.key, st);
   }
   // falling edges (cleared → recovery note)
   for (const [key, st] of [...state]) {
     if (!curKeys.has(key)) {
-      if (st.alerted) await send(`🟢 RESOLVED — ${key.replace(/_/g, ' ')} cleared.\n${a.one_liner}`);
+      if (st.alerted && !muted) await send(`🟢 RESOLVED — ${key.replace(/_/g, ' ')} cleared.\n${a.one_liner}`);
       state.delete(key);
     }
   }
