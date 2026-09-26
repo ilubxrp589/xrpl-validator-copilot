@@ -56,6 +56,8 @@ export async function sample() {
     age: s.ledger?.age ?? null,                           // generic — ledger currency
     peers: s.peers?.peers ?? null,                        // generic
     host_avail: s.host_memory?.available_pct ?? null,     // generic — host mem % (OOM watch)
+    host_mem_psi: s.host_pressure?.memory_full_avg60 ?? null, // generic — % of the last minute all tasks waited on memory
+    host_io_psi: s.host_pressure?.io_full_avg60 ?? null,      // generic — the same for disk I/O
     store_free_gb: s.store_pruning?.disk?.free_gb ?? null, // ledger-store volume, GiB free
     store_free_b: s.store_pruning?.disk?.free_b ?? null,   // exact bytes — preferred for the burn rate
     store_top: s.store_pruning?.top ?? null,               // highest retained seq — gives ledgers/day

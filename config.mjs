@@ -103,6 +103,10 @@ export const config = {
     // THE REAL FIX is forwarding the peer port to the node's LAN address on the router; with
     // inbound peers this node would hold 20-40 and never starve. Raise these
     // back toward 10/5 once that is done.
+    // Host pressure (Linux PSI "full" avg60, % of the last minute every task waited). Informational only —
+    // it words the pages. Calm on the reference node: memory ~0.2, disk I/O ~7 (the ledger store's reads).
+    hostMemPressureWatch: 5, hostMemPressureDegraded: 20,
+    hostIoPressureWatch: 50, hostIoPressureDegraded: 80,
     peersWatch: 3,          // <= this many peers → WATCH
     peersDegraded: 1,       // <= this many peers → DEGRADED
   },

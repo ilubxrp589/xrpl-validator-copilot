@@ -213,6 +213,35 @@ function hostMemorySignal(h) {
   };
 }
 
+/** Parse a /proc/pressure/<resource> file: { some: {avg10, avg60, avg300}, full: {...} } (percent of time). */
+export function parsePressure(text) {
+  const out = {};
+  for (const m of String(text).matchAll(/^(some|full) avg10=([\d.]+) avg60=([\d.]+) avg300=([\d.]+)/gm)) {
+    out[m[1]] = { avg10: Number(m[2]), avg60: Number(m[3]), avg300: Number(m[4]) };
+  }
+  return out;
+}
+
+// Memory and disk-I/O pressure on the host (Linux PSI): the share of the last minute during which every
+// runnable task waited for memory, or for I/O. INFORMATIONAL — it never gates the verdict; it explains one.
+// 2026-09-26 03:16: a text search across a large directory tree on the node's host saturated the system
+// disk and pushed ~5 GB of process memory into swap on it; xrpld stalled ~4 minutes and the page said only
+// "UNREACHABLE". With the pressure in the page, the cause is on the page.
+function hostPressureSignal(h) {
+  const p = h?.pressure;
+  if (!p?.memory?.full && !p?.io?.full) return null;
+  const mem = p.memory?.full?.avg60 ?? 0, io = p.io?.full?.avg60 ?? 0;
+  const status = mem >= T.hostMemPressureDegraded || io >= T.hostIoPressureDegraded ? 'degraded'
+    : mem >= T.hostMemPressureWatch || io >= T.hostIoPressureWatch ? 'watch' : 'ok';
+  const why = mem >= T.hostMemPressureWatch ? ' — the host is swapping; a stalled node usually follows'
+    : io >= T.hostIoPressureWatch ? ' — a disk is saturated' : '';
+  return {
+    status, informational: true,
+    detail: `pressure: memory ${mem}%, disk I/O ${io}% of the last minute${why}`,
+    memory_full_avg60: mem, io_full_avg60: io,
+  };
+}
+
 // Ledger-store pruning health.
 //
 // 2026-08-25 outage: online_delete keeps two store generations resident and
@@ -384,6 +413,8 @@ export function assess(bundle) {
   if (pruning) signals.store_pruning = pruning;
   const hostMem = hostMemorySignal(bundle.host);
   if (hostMem) signals.host_memory = hostMem;
+  const hostPressure = hostPressureSignal(bundle.host);
+  if (hostPressure) signals.host_pressure = hostPressure;
   if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));
 
   // FFI tier was EXPECTED (apiBase configured) but the validator API didn't answer:
@@ -433,6 +464,9 @@ function oneLiner(verdict, s, triggers, ffi) {
   }
   if (verdict === 'AMENDMENT_BLOCKED') return 'AMENDMENT_BLOCKED — node is out of consensus; upgrade rippled/xrpld to support the activated amendment(s).';
   if (verdict === 'SYNCING') return `SYNCING — ${s.sync?.detail || s.server_state?.detail || 'catching up'}.`;
-  if (verdict === 'UNREACHABLE') return 'UNREACHABLE — could not reach the rippled RPC.';
+  if (verdict === 'UNREACHABLE') {
+    const hp = s.host_pressure;
+    return `UNREACHABLE — could not reach the rippled RPC.${hp && hp.status !== 'ok' ? ` Host ${hp.detail}.` : ''}`;
+  }
   return `${verdict} — triggered by: ${triggers.join(', ') || 'see signals'}.`;
 }

@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { cpus } from 'node:os';
 import { config } from './config.mjs';
-import { assess } from './assess.mjs';
+import { assess, parsePressure } from './assess.mjs';
 import { validationSnapshot } from './validations.mjs';
 import { incidentSummary, getIncidents } from './incidents.mjs';
 
@@ -146,6 +146,11 @@ async function hostStats() {
     if (total == null || avail == null) return { available: false, note: 'could not parse /proc/meminfo' };
     let load1 = null;
     try { load1 = Number((await readFile('/proc/loadavg', 'utf8')).split(' ')[0]); } catch { /* */ }
+    // Pressure stall information (Linux 4.20+): how long tasks waited for memory and for disk I/O.
+    const pressure = {};
+    for (const r of ['memory', 'io']) {
+      try { pressure[r] = parsePressure(await readFile(`/proc/pressure/${r}`, 'utf8')); } catch { /* no PSI here */ }
+    }
     // Ledger-store disk (still read-only: statfs). The 2026-08-25 outage: two
     // online_delete generations plus SQLite transaction.db outgrew the volume
     // and xrpld stopped itself cleanly at <512 MB free — nothing was watching
@@ -178,6 +183,7 @@ async function hostStats() {
       total_gb: +total.toFixed(1), available_gb: +avail.toFixed(1), available_pct: +(100 * avail / total).toFixed(1),
       swap_used_gb: swapT != null && swapF != null ? +(swapT - swapF).toFixed(1) : null, swap_total_gb: swapT != null ? +swapT.toFixed(1) : null,
       load1, cores: cpus().length,
+      pressure,
     };
   } catch { return { available: false, note: 'host metrics unavailable (no /proc/meminfo)' }; }
 }

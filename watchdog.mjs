@@ -54,13 +54,16 @@ function signalDetails(a) {
 export function conditions(a, trend) {
   const out = [];
   const v = a.verdict;
+  // High memory or disk pressure on the host explains a page (the UNREACHABLE one-liner carries it already).
+  const hp = a.signals?.host_pressure;
+  const why = hp && hp.status !== 'ok' ? `\n• host ${hp.detail}` : '';
 
   // Reactive — from the deterministic verdict
   if (v === 'AMENDMENT_BLOCKED') out.push({ key: 'amendment_blocked', level: 'critical', title: '🔴 AMENDMENT-BLOCKED', detail: a.one_liner });
-  else if (v === 'HALT_SUSPECTED') out.push({ key: 'halt_suspected', level: 'critical', title: '🔴 HALT SUSPECTED', detail: a.one_liner });
+  else if (v === 'HALT_SUSPECTED') out.push({ key: 'halt_suspected', level: 'critical', title: '🔴 HALT SUSPECTED', detail: a.one_liner + why });
   else if (v === 'UNREACHABLE') out.push({ key: 'unreachable', level: 'critical', title: '🔴 NODE UNREACHABLE', detail: a.one_liner });
-  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: signalDetails(a) || a.one_liner, signals: triggerNames(a) });
-  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: signalDetails(a) || a.one_liner, signals: triggerNames(a) });
+  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: (signalDetails(a) || a.one_liner) + why, signals: triggerNames(a) });
+  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: (signalDetails(a) || a.one_liner) + why, signals: triggerNames(a) });
 
   // Predictive — trend-based; can fire even when the snapshot verdict still looks OK.
   // (Tier-aware: these fields are null on a stock node, so they simply don't fire.)
