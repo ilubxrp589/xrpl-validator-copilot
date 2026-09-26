@@ -63,7 +63,8 @@ export const config = {
     },
     webhookUrl: process.env.COPILOT_ALERT_WEBHOOK || LOCAL.alerts?.webhookUrl || '',
     webhookFormat: process.env.COPILOT_ALERT_FORMAT || LOCAL.alerts?.webhookFormat || 'json', // json|slack|discord|ntfy
-    cooldownMin: Number(process.env.COPILOT_ALERT_COOLDOWN_MIN || 15),
+    // Minutes between repeats of a still-present CRITICAL alert (warnings do not repeat; see watchdog.mjs).
+    cooldownMin: Number(process.env.COPILOT_ALERT_COOLDOWN_MIN || LOCAL.alerts?.cooldownMin || 15),
     // Scheduled health digest pushed to the same channel: 'off' (default), 'daily',
     // or 'weekly', fired at digestHourUtc. Incident counts make it a real recap.
     digest: process.env.COPILOT_DIGEST || LOCAL.alerts?.digest || 'off',

@@ -3,16 +3,17 @@
 // Watches COP's own deterministic verdict + the trend buffer and pushes an alert
 // when something goes wrong — reactively (verdict flips to a bad state) AND
 // predictively (trends that signal trouble before the verdict tips). It only
-// READS and NOTIFIES; it never touches the node. De-bounced (must persist 2 ticks)
-// and de-duped (cooldown between repeats), and it sends a recovery note on clear,
-// so it won't spam.
+// READS and NOTIFIES; it never touches the node. De-bounced (must persist 2 ticks);
+// a warning pages once per episode (again only when a new signal joins it), a
+// critical condition repeats after the cooldown, and it sends a recovery note on
+// clear, so it won't spam.
 
 import { config } from './config.mjs';
 import { recordIncident, countOfKind } from './incidents.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 
 const A = config.alerts;
-const state = new Map(); // key -> { count, alerted, lastAlertAt, level, mutedRecorded }
+const state = new Map(); // key -> { count, alerted, lastAlertAt, level, paged, mutedRecorded }
 
 // Mute switch (2026-09-11): a `MUTE` file beside config.local.json silences pages
 // and recovery notes while it exists — incidents are still recorded, conditions
@@ -37,6 +38,9 @@ function muteState() {
 
 const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
+// The names of the gating signals that are off (triggers read "<signal>:<status>").
+const triggerNames = (a) => (a.triggers || []).map((t) => t.split(':')[0]);
+
 // The detail of each gating signal that's off — the human reason for WATCH/DEGRADED.
 function signalDetails(a) {
   return (a.triggers || []).map((t) => {
@@ -55,8 +59,8 @@ export function conditions(a, trend) {
   if (v === 'AMENDMENT_BLOCKED') out.push({ key: 'amendment_blocked', level: 'critical', title: '🔴 AMENDMENT-BLOCKED', detail: a.one_liner });
   else if (v === 'HALT_SUSPECTED') out.push({ key: 'halt_suspected', level: 'critical', title: '🔴 HALT SUSPECTED', detail: a.one_liner });
   else if (v === 'UNREACHABLE') out.push({ key: 'unreachable', level: 'critical', title: '🔴 NODE UNREACHABLE', detail: a.one_liner });
-  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: signalDetails(a) || a.one_liner });
-  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: signalDetails(a) || a.one_liner });
+  else if (v === 'DEGRADED') out.push({ key: 'degraded', level: 'critical', title: '🔴 DEGRADED', detail: signalDetails(a) || a.one_liner, signals: triggerNames(a) });
+  else if (v === 'WATCH') out.push({ key: 'watch', level: 'warning', title: '🟡 WATCH', detail: signalDetails(a) || a.one_liner, signals: triggerNames(a) });
 
   // Predictive — trend-based; can fire even when the snapshot verdict still looks OK.
   // (Tier-aware: these fields are null on a stock node, so they simply don't fire.)
@@ -72,6 +76,36 @@ export function conditions(a, trend) {
   return out;
 }
 
+/**
+ * One tick of one present condition: its next state, and what to do about it — null (nothing),
+ * 'new' (rising edge), 'changed' (a signal no earlier page of this episode named has joined it),
+ * 'repeat' (critical, still present after the cooldown) or 'muted' (would page; record it instead).
+ *
+ * A warning does not repeat: a slow condition such as store pruning (days until the next rotation)
+ * reads WATCH for days with numbers that change every tick, and on 2026-09-26 repeating it every
+ * cooldown paged 21 times in five hours. While muted nothing pages and nothing is marked paged, so
+ * the first live tick pages whatever is still there; the incident is recorded once.
+ */
+export function advance(prev, c, now, cooldownMs, muted = false) {
+  const st = prev ? { ...prev, paged: new Set(prev.paged) } : { count: 0, alerted: false, lastAlertAt: 0, paged: new Set(), mutedRecorded: false };
+  st.count += 1; st.level = c.level;
+  if (st.count < 2) return { st, action: null };   // debounce: must persist ≥2 ticks
+  const signals = c.signals || [];
+  const action = !st.alerted ? 'new'
+    : signals.some((s) => !st.paged.has(s)) ? 'changed'
+    : c.level === 'critical' && now - st.lastAlertAt > cooldownMs ? 'repeat'
+    : null;
+  if (!action) return { st, action };
+  if (muted) {
+    if (st.mutedRecorded) return { st, action: null };
+    st.mutedRecorded = true;
+    return { st, action: 'muted' };
+  }
+  st.alerted = true; st.lastAlertAt = now;
+  for (const s of signals) st.paged.add(s);
+  return { st, action };
+}
+
 /** Called on every sample. Diffs conditions vs prior state and fires alerts. */
 export async function tick(a) {
   if (!A.channel) return; // alerts disabled
@@ -82,25 +116,18 @@ export async function tick(a) {
   const curKeys = new Set(current.map((c) => c.key));
   const now = Date.now();
 
-  // rising edges (debounce: must persist ≥2 ticks; cooldown between repeats)
+  // rising edges, new signals, critical repeats (see advance)
   for (const c of current) {
-    const st = state.get(c.key) || { count: 0, alerted: false, lastAlertAt: 0, level: c.level, mutedRecorded: false };
-    st.count += 1; st.level = c.level;
-    const cooled = now - st.lastAlertAt > A.cooldownMin * 60_000;
-    if (st.count >= 2 && (!st.alerted || cooled)) {
-      if (muted) {
-        // record the incident once per rising edge; no page, and `alerted`
-        // stays false so the first live tick pages it if it is still there
-        if (!st.mutedRecorded) { recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: `${c.detail} [muted]` }); st.mutedRecorded = true; }
-      } else {
-        recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: c.detail });
-        const n = countOfKind(c.key);
-        const ctx = n > 1 ? ` (${ordinal(n)} in 7d)` : '';
-        await send(`${c.title}${ctx}\n${c.detail}`);
-        st.alerted = true; st.lastAlertAt = now;
-      }
-    }
+    const { st, action } = advance(state.get(c.key), c, now, A.cooldownMin * 60_000, muted);
     state.set(c.key, st);
+    if (action === 'muted') recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: `${c.detail} [muted]` });
+    else if (action === 'repeat') await send(`${c.title} (still present)\n${c.detail}`);
+    else if (action) {
+      recordIncident({ kind: c.key, level: c.level, verdict: a.verdict, detail: c.detail });
+      const n = countOfKind(c.key);
+      const ctx = n > 1 ? ` (${ordinal(n)} in 7d)` : '';
+      await send(`${c.title}${ctx}\n${c.detail}`);
+    }
   }
   // falling edges (cleared → recovery note)
   for (const [key, st] of [...state]) {
