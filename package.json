@@ -21,7 +21,8 @@
     "test:sync": "node sync.test.mjs",
     "test:amendments": "node amendments.test.mjs",
     "test:watchdog": "node watchdog.test.mjs",
-    "test:pressure": "node host-pressure.test.mjs"
+    "test:pressure": "node host-pressure.test.mjs",
+    "test:engine": "node engine-links.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0"

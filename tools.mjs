@@ -78,7 +78,9 @@ async function getAmendments() {
       // Keep the hash: xrpld names only the amendments it knows, so an unknown one is identified by it.
       const all = Object.entries(r.features).map(([hash, a]) => ({ hash, ...a }));
       const unsupported = all.filter((a) => a.supported === false).map((a) => ({ hash: a.hash, name: a.name, enabled: !!a.enabled, majority: a.majority ?? null }));
-      data = { available: true, total: all.length, enabled: all.filter((a) => a.enabled).length, supports_all: unsupported.length === 0, unsupported };
+      // Amendments with majority, not yet enabled: they activate ~2 weeks after `majority` (Ripple-epoch seconds).
+      const pending = all.filter((a) => !a.enabled && a.majority).map((a) => ({ hash: a.hash, name: a.name, majority: a.majority }));
+      data = { available: true, total: all.length, enabled: all.filter((a) => a.enabled).length, supports_all: unsupported.length === 0, unsupported, pending };
     }
   } catch (e) { data = { available: false, note: String(e?.message || e) }; }
   finally { clearTimeout(t); }
@@ -212,7 +214,10 @@ export async function readAll() {
     ]);
     if (engine || stateHash) {
       ffiAvailable = true;
-      ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null };
+      // Newer validator builds only: absent endpoints are skipped quietly, not reported as read errors.
+      const optional = async (path) => { try { return await getJson(`${config.apiBase}${path}`); } catch { return null; } };
+      const [connections, engineAmendments] = await Promise.all([optional('/api/connections'), optional('/api/amendments')]);
+      ffi = { engine, consensus, stateHash, peers: peersRaw?.connected ?? peersRaw?.peers ?? null, connections, engineAmendments };
     }
   }
   return { rippled, amendments, host, validators, validations: validationSnapshot(), ffi, ffiAvailable, errors };

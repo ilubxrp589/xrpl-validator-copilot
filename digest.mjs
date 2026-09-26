@@ -39,6 +39,8 @@ export async function buildDigest() {
   }
   if (sig.validation?.detail) hi.push(sig.validation.detail.split(' — ')[0]);
   if (sig.validator_list?.soonest_days != null) hi.push(`UNL expiry ${sig.validator_list.soonest_days}d`);
+  if (sig.engine_amendments && sig.engine_amendments.detail !== 'no amendment has majority on mainnet') hi.push(sig.engine_amendments.detail);
+  if (sig.validator_links?.detail) hi.push(`validator: ${sig.validator_links.detail}`);
   if (hi.length) lines.push('\n' + hi.map((x) => `• ${x}`).join('\n'));
 
   return lines.join('\n');

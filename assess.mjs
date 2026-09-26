@@ -155,6 +155,45 @@ function amendmentSignal(r, am) {
   return { status: 'ok', detail: 'not amendment-blocked' };
 }
 
+// Engine readiness for coming amendments (FFI tier). An amendment with majority on mainnet activates about two
+// weeks later. The validator lists (/api/amendments) the pending amendments its engine is ready for (implemented and
+// verified); any other with
+// majority will make the engine diverge from mainnet the day it activates. 2026-09-25: fixBatchV1_2 gained
+// majority while its source was unpublished, and nothing counted down to 2026-10-09.
+const RIPPLE_EPOCH_S = 946_684_800;
+const activationOf = (majority) => new Date((majority + RIPPLE_EPOCH_S + 14 * 86_400) * 1000);
+const utc = (d) => `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+function engineAmendmentsSignal(am, eng, now = Date.now()) {
+  if (!am?.available || !Array.isArray(am.pending) || !Array.isArray(eng?.ready_pending)) return null;
+  const ready = (a) => eng.ready_pending.some((k) => (a.name && k.name === a.name)
+    || (a.hash && k.hash && a.hash.toUpperCase() === k.hash.toUpperCase()));
+  const when = (a) => {
+    const t = activationOf(a.majority);
+    return `${amendmentLabel(a)} activates ~${utc(t)} (in ${Math.max(0, Math.floor((t - now) / 86_400_000))} d)`;
+  };
+  const coming = [...am.pending].sort((x, y) => x.majority - y.majority);
+  const missing = coming.filter((a) => !ready(a));
+  if (missing.length) return { status: 'watch', detail: `${missing.map(when).join('; ')} — our engine is not ready for it yet`, missing: missing.map((a) => a.name || a.hash) };
+  return { status: 'ok', detail: coming.length ? `coming amendments, our engine is ready for all: ${coming.map(when).join('; ')}` : 'no amendment has majority on mainnet' };
+}
+
+// The validator's own connections (FFI tier, /api/connections): the endpoints ws-sync and its RPC client are on —
+// the primary, or a public fallback and for how long — and its validation relay slots. Informational: the
+// reference node's own health already gates the verdict.
+const dur = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`);
+function validatorLinksSignal(c) {
+  if (!c?.ws || !c?.rpc || !Array.isArray(c.relays)) return null;
+  const on = (x, what) => (x.on_fallback ? `${what} on the public fallback ${x.endpoint} for ${dur(x.fallback_secs)}` : `${what} on the primary`);
+  const up = c.relays.filter((r) => r.connected);
+  const ends = !c.ws.on_fallback && !c.rpc.on_fallback ? 'ws-sync and RPC on the primary' : `${on(c.ws, 'ws-sync')}; ${on(c.rpc, 'RPC')}`;
+  const relays = `relays ${up.length}/${c.relays.length}${up.length ? ` (${up.map((r) => r.connected.replace(/:\d+$/, '')).join(', ')})` : ''}`;
+  return {
+    status: 'ok', informational: true,
+    detail: `${ends}; ${relays}; since start: ${c.ws.fallback_stints} ws-sync fallback stint(s), ${c.rpc.failovers} RPC failover(s)`,
+    ws_on_fallback: !!c.ws.on_fallback, relays_up: up.length, relays_total: c.relays.length,
+  };
+}
+
 // Validator-list / UNL health. An expired or non-refreshing trusted list quietly
 // drops a node out of consensus (it loses its trusted set). Generic — any node that
 // follows consensus has a UNL. Omitted entirely when the admin RPC isn't available,
@@ -415,7 +454,13 @@ export function assess(bundle) {
   if (hostMem) signals.host_memory = hostMem;
   const hostPressure = hostPressureSignal(bundle.host);
   if (hostPressure) signals.host_pressure = hostPressure;
-  if (ffiAvailable && ffi) Object.assign(signals, ffiSignals(ffi, rippled));
+  if (ffiAvailable && ffi) {
+    Object.assign(signals, ffiSignals(ffi, rippled));
+    const readiness = engineAmendmentsSignal(bundle.amendments, ffi.engineAmendments);
+    if (readiness) signals.engine_amendments = readiness;
+    const links = validatorLinksSignal(ffi.connections);
+    if (links) signals.validator_links = links;
+  }
 
   // FFI tier was EXPECTED (apiBase configured) but the validator API didn't answer:
   // the validator we monitor is DOWN/halted. Must NOT masquerade as generic-HEALTHY.
