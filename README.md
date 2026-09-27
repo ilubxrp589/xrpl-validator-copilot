@@ -124,6 +124,7 @@ assess.mjs       deterministic two-tier verdict (generic core + optional FFI)
 tools.mjs        read-only tools: rippled reader, FFI auto-detect, divergence forensics
 trend.mjs        rolling trend memory — rate-of-change over time
 watchdog.mjs     predictive alert watchdog (Telegram / webhook)
+inbox.mjs        Telegram inbox: files and notes the owner sends the bot; owner taps on ship-request buttons
 copilot.mjs      provider dispatch (claude CLI ↔ Anthropic SDK)
 claude-cli.mjs   account-auth provider (claude -p) + investigate mode
 agent.mjs        API provider (Anthropic SDK tool-use loop)
