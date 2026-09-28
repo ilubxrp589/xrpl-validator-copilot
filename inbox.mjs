@@ -3,7 +3,7 @@
 // validator team's ship-request buttons: a tap is recorded in
 // ~/.local/state/xrpl-ops/taps.jsonl for the team, answered, and the buttons
 // are removed so a request can be answered only once. The owner's /status,
-// /pause and /resume are recorded the same way, in
+// /pause, /resume, /keep N and /drop N are recorded the same way, in
 // ~/.local/state/xrpl-ops/commands.jsonl, for the team to act on. Telegram
 // allows one getUpdates reader per bot, so taps and commands come through here.
 import fs from 'node:fs';
@@ -50,12 +50,14 @@ async function handle(msg) {
     else if (msg.audio) await save(msg.audio.file_id, msg.audio.file_name || `audio_${msg.message_id}.mp3`, msg);
     else if (msg.voice) await save(msg.voice.file_id, `voice_${msg.message_id}.ogg`, msg);
     else if (msg.text) {
-      const cmd = /^\/(status|pause|resume)(@\w+)?\s*$/i.exec(msg.text.trim());
-      if (cmd) {                                   // the validator team's commands, owner only (checked above)
-        const rec = { ts: new Date().toISOString(), command: cmd[1].toLowerCase(), from: msg.from?.id, message_id: msg.message_id };
+      const cmd = /^\/(status|pause|resume|keep|drop)(@\w+)?(?:\s+(\d{1,4}))?\s*$/i.exec(msg.text.trim());
+      const needsArg = cmd && ['keep', 'drop'].includes(cmd[1].toLowerCase());
+      if (cmd && (!needsArg || cmd[3])) {          // the validator team's commands, owner only (checked above)
+        const rec = { ts: new Date().toISOString(), command: cmd[1].toLowerCase(), from: msg.from?.id, message_id: msg.message_id,
+                      ...(cmd[3] ? { arg: cmd[3] } : {}) };
         fs.appendFileSync(COMMANDS, JSON.stringify(rec) + '\n');
-        console.log(rec.ts, 'command', rec.command);
-        await api('sendMessage', { chat_id: msg.chat.id, text: `Got /${rec.command}: the team answers within a minute.`, disable_notification: true });
+        console.log(rec.ts, 'command', rec.command, rec.arg ?? '');
+        await api('sendMessage', { chat_id: msg.chat.id, text: `Got /${rec.command}${rec.arg ? ' ' + rec.arg : ''}: the team answers within a minute.`, disable_notification: true });
       } else {
         fs.appendFileSync(path.join(INBOX, 'notes.txt'), `${new Date(msg.date * 1000).toISOString()} ${msg.text}\n`);
         console.log(new Date().toISOString(), 'note', msg.text.slice(0, 80));
