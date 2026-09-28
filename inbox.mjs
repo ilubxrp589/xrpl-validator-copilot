@@ -2,8 +2,10 @@
 // and saves them to ~/telegram-inbox/. It also takes the owner's taps on the
 // validator team's ship-request buttons: a tap is recorded in
 // ~/.local/state/xrpl-ops/taps.jsonl for the team, answered, and the buttons
-// are removed so a request can be answered only once. Telegram allows one
-// getUpdates reader per bot, so taps must come through here.
+// are removed so a request can be answered only once. The owner's /status,
+// /pause and /resume are recorded the same way, in
+// ~/.local/state/xrpl-ops/commands.jsonl, for the team to act on. Telegram
+// allows one getUpdates reader per bot, so taps and commands come through here.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -14,6 +16,7 @@ const { token, chatId } = cfg.alerts.telegram;
 const INBOX = path.join(os.homedir(), 'telegram-inbox');
 const OFFSET_FILE = path.join(INBOX, '.offset');
 const TAPS = path.join(os.homedir(), '.local', 'state', 'xrpl-ops', 'taps.jsonl');
+const COMMANDS = path.join(os.homedir(), '.local', 'state', 'xrpl-ops', 'commands.jsonl');
 fs.mkdirSync(INBOX, { recursive: true });
 fs.mkdirSync(path.dirname(TAPS), { recursive: true });
 
@@ -47,8 +50,16 @@ async function handle(msg) {
     else if (msg.audio) await save(msg.audio.file_id, msg.audio.file_name || `audio_${msg.message_id}.mp3`, msg);
     else if (msg.voice) await save(msg.voice.file_id, `voice_${msg.message_id}.ogg`, msg);
     else if (msg.text) {
-      fs.appendFileSync(path.join(INBOX, 'notes.txt'), `${new Date(msg.date * 1000).toISOString()} ${msg.text}\n`);
-      console.log(new Date().toISOString(), 'note', msg.text.slice(0, 80));
+      const cmd = /^\/(status|pause|resume)(@\w+)?\s*$/i.exec(msg.text.trim());
+      if (cmd) {                                   // the validator team's commands, owner only (checked above)
+        const rec = { ts: new Date().toISOString(), command: cmd[1].toLowerCase(), from: msg.from?.id, message_id: msg.message_id };
+        fs.appendFileSync(COMMANDS, JSON.stringify(rec) + '\n');
+        console.log(rec.ts, 'command', rec.command);
+        await api('sendMessage', { chat_id: msg.chat.id, text: `Got /${rec.command}: the team answers within a minute.`, disable_notification: true });
+      } else {
+        fs.appendFileSync(path.join(INBOX, 'notes.txt'), `${new Date(msg.date * 1000).toISOString()} ${msg.text}\n`);
+        console.log(new Date().toISOString(), 'note', msg.text.slice(0, 80));
+      }
     }
   } catch (e) { console.error('handle failed', e.message); }
 }
