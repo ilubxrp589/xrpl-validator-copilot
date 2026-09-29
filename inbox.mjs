@@ -1,8 +1,10 @@
 // Telegram inbox: long-polls the copilot bot for files sent by the owner
 // and saves them to ~/telegram-inbox/. It also takes the owner's taps on the
-// validator team's ship-request buttons: a tap is recorded in
-// ~/.local/state/xrpl-ops/taps.jsonl for the team, answered, and the buttons
-// are removed so a request can be answered only once. The owner's /status,
+// validator team's ship-request buttons, and on Claude's approval questions
+// (Yes / No: "when you need my approval, post it to Telegram with Yes/No
+// buttons, and my tap is my answer", 2026-09-29): a tap is recorded in
+// ~/.local/state/xrpl-ops/taps.jsonl, answered, and the buttons are removed
+// so a question can be answered only once. The owner's /status,
 // /pause, /resume, /keep N, /drop N, /reopen N, /away and /here are recorded the same way, in
 // ~/.local/state/xrpl-ops/commands.jsonl, for the team to act on. Telegram
 // allows one getUpdates reader per bot, so taps and commands come through here.
@@ -66,19 +68,27 @@ async function handle(msg) {
   } catch (e) { console.error('handle failed', e.message); }
 }
 
-// A tap on a ship-request button: sr:<request id>:approve or sr:<request id>:hold, owner only.
+// A tap on a ship-request button (sr:<request id>:approve|hold) or on an
+// approval question's (ap:<approval number>:yes|no), owner only. An approval
+// is recorded under "approval", never "request", so no tap on a question can
+// read as a ship request's.
 async function tap(q) {
   const answer = (text) => api('answerCallbackQuery', { callback_query_id: q.id, ...(text ? { text } : {}) });
   if (String(q.from?.id) !== String(chatId)) { await answer('Only the owner can answer this.'); return; }
   const m = /^sr:(\d+):(approve|hold)$/.exec(q.data || '');
-  if (!m) { await answer(); return; }
-  const rec = { ts: new Date().toISOString(), request: Number(m[1]), answer: m[2], from: q.from.id, message_id: q.message?.message_id };
+  const a = /^ap:(\d+):(yes|no)$/.exec(q.data || '');
+  if (!m && !a) { await answer(); return; }
+  const rec = m
+    ? { ts: new Date().toISOString(), request: Number(m[1]), answer: m[2], from: q.from.id, message_id: q.message?.message_id }
+    : { ts: new Date().toISOString(), approval: Number(a[1]), answer: a[2], from: q.from.id, message_id: q.message?.message_id };
   fs.appendFileSync(TAPS, JSON.stringify(rec) + '\n');
-  console.log(rec.ts, 'tap', m[2], 'request', m[1]);
-  await answer(m[2] === 'approve' ? 'Approved: it ships after the soak.' : 'Held.');
+  console.log(rec.ts, 'tap', rec.answer, m ? 'request' : 'approval', m ? m[1] : a[1]);
+  await answer(m ? (m[2] === 'approve' ? 'Approved: it ships after the soak.' : 'Held.')
+                 : (a[2] === 'yes' ? 'Yes: recorded.' : 'No: recorded.'));
   if (!q.message) return;
   const when = new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
-  const note = `\n\n${m[2] === 'approve' ? '✅ Approved after the soak' : '⏸ Held'} · ${when} ET`;
+  const said = m ? (m[2] === 'approve' ? '✅ Approved after the soak' : '⏸ Held') : (a[2] === 'yes' ? '✅ Yes' : '❌ No');
+  const note = `\n\n${said} · ${when} ET`;
   const target = { chat_id: q.message.chat.id, message_id: q.message.message_id };
   const r = q.message.text ? await api('editMessageText', { ...target, text: q.message.text + note }) : { ok: false };
   if (!r.ok) await api('editMessageReplyMarkup', { ...target, reply_markup: { inline_keyboard: [] } });
