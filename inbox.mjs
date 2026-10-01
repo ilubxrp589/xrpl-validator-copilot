@@ -8,10 +8,13 @@
 // /pause, /resume, /keep N, /drop N, /reopen N, /away and /here are recorded the same way, in
 // ~/.local/state/xrpl-ops/commands.jsonl, for the team to act on. Telegram
 // allows one getUpdates reader per bot, so taps and commands come through here.
+// /mail reads and posts the validator team's mailbox (~/bin/handoff, 2026-10-01): /mail shows who has unread
+// mail and the latest, /mail ROLE what waits for that role, /mail ROLE TEXT posts TEXT to it as james.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
+import { MAIL, PATTERN as MAIL_PATTERN, mailReply } from './mailcmd.mjs';
 
 const cfg = JSON.parse(fs.readFileSync(new URL('./config.local.json', import.meta.url)));
 const { token, chatId } = cfg.alerts.telegram;
@@ -43,6 +46,13 @@ async function save(fileId, name, msg) {
   await api('sendMessage', { chat_id: msg.chat.id, text: `📥 saved ${path.basename(dest)}` });
 }
 
+// The team mailbox from Telegram (mailcmd.mjs): /mail, /mail ROLE, /mail ROLE TEXT. Owner only, as every command here.
+async function mailCommand(msg, role, text) {
+  const reply = await mailReply(role, text);
+  await api('sendMessage', { chat_id: msg.chat.id, text: (MAIL + reply).slice(0, 4000), disable_notification: true });
+  console.log(new Date().toISOString(), 'mail', role || '-', text ? 'post' : 'read');
+}
+
 async function handle(msg) {
   if (String(msg.chat?.id) !== String(chatId)) return; // owner only
   try {
@@ -52,6 +62,8 @@ async function handle(msg) {
     else if (msg.audio) await save(msg.audio.file_id, msg.audio.file_name || `audio_${msg.message_id}.mp3`, msg);
     else if (msg.voice) await save(msg.voice.file_id, `voice_${msg.message_id}.ogg`, msg);
     else if (msg.text) {
+      const mail = MAIL_PATTERN.exec(msg.text.trim());
+      if (mail) return await mailCommand(msg, mail[1]?.toLowerCase(), mail[2]);
       const cmd = /^\/(status|pause|resume|keep|drop|reopen|away|here)(@\w+)?(?:\s+(\d{1,4}))?\s*$/i.exec(msg.text.trim());
       const needsArg = cmd && ['keep', 'drop', 'reopen'].includes(cmd[1].toLowerCase());
       if (cmd && (!needsArg || cmd[3])) {          // the validator team's commands, owner only (checked above)
