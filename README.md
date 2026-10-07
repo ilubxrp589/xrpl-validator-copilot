@@ -138,3 +138,7 @@ system-prompt.md the copilot's instructions
 The `runbooks/` reflect the author's own deployment — treat them as example operator
 SOPs and adapt them to your setup. Architecture: deterministic verdict + LLM explainer,
 advisory and read-only by design.
+
+## License
+
+MIT, with an attribution requirement: if you use, copy or modify this code, credit James Turner with a link to https://github.com/ilubxrp589/xrpl-validator-copilot. See [LICENSE](LICENSE).
