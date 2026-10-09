@@ -10,11 +10,13 @@
 // allows one getUpdates reader per bot, so taps and commands come through here.
 // /mail reads and posts the validator team's mailbox (~/bin/handoff, 2026-10-01): /mail shows who has unread
 // mail and the latest, /mail ROLE what waits for that role, /mail ROLE TEXT posts TEXT to it as james.
+// /tui sends one live picture of the validator's terminal dashboard (tuicmd.mjs, 2026-10-09).
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { MAIL, PATTERN as MAIL_PATTERN, mailReply } from './mailcmd.mjs';
+import { PATTERN as TUI_PATTERN, tuiPicture, sendPicture } from './tuicmd.mjs';
 
 const cfg = JSON.parse(fs.readFileSync(new URL('./config.local.json', import.meta.url)));
 const { token, chatId } = cfg.alerts.telegram;
@@ -53,6 +55,14 @@ async function mailCommand(msg, role, text) {
   console.log(new Date().toISOString(), 'mail', role || '-', text ? 'post' : 'read');
 }
 
+// The dashboard as a picture (tuicmd.mjs): /tui. Owner only, as every command here.
+async function tuiCommand(msg) {
+  const pic = await tuiPicture();
+  const r = pic.error ? { ok: false, description: pic.error } : await sendPicture(token, msg.chat.id, pic);
+  if (!r.ok) await api('sendMessage', { chat_id: msg.chat.id, text: `/tui: ${r.description}`.slice(0, 4000), disable_notification: true });
+  console.log(new Date().toISOString(), 'tui', r.ok ? 'sent' : r.description);
+}
+
 async function handle(msg) {
   if (String(msg.chat?.id) !== String(chatId)) return; // owner only
   try {
@@ -64,6 +74,7 @@ async function handle(msg) {
     else if (msg.text) {
       const mail = MAIL_PATTERN.exec(msg.text.trim());
       if (mail) return await mailCommand(msg, mail[1]?.toLowerCase(), mail[2]);
+      if (TUI_PATTERN.test(msg.text.trim())) return await tuiCommand(msg);
       const cmd = /^\/(status|pause|resume|keep|drop|reopen|away|here)(@\w+)?(?:\s+(\d{1,4}))?\s*$/i.exec(msg.text.trim());
       const needsArg = cmd && ['keep', 'drop', 'reopen'].includes(cmd[1].toLowerCase());
       if (cmd && (!needsArg || cmd[3])) {          // the validator team's commands, owner only (checked above)

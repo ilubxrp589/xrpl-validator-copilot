@@ -23,7 +23,8 @@
     "test:watchdog": "node watchdog.test.mjs",
     "test:pressure": "node host-pressure.test.mjs",
     "test:engine": "node engine-links.test.mjs",
-    "test:mail": "node mailcmd.test.mjs"
+    "test:mail": "node mailcmd.test.mjs",
+    "test:tui": "node tuicmd.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0"
